@@ -1,9 +1,7 @@
 --=============================================================
---  JJS KILLER // v0.1 — menu skeleton
+--  JJS KILLER // v0.4 — Player & QoL, ESP, Interface, Configuration, Info
 --  built for He by Nyx
 --  target: roblox / jujutsu shenanigans
---  toggle keybind = reconfigurable in Settings > Interface
---  floating "JJS KILLER" button = always visible, click to toggle
 --=============================================================
 
 local Players          = game:GetService("Players")
@@ -13,12 +11,11 @@ local RunService       = game:GetService("RunService")
 local CoreGui          = game:GetService("CoreGui")
 
 local lp = Players.LocalPlayer
-
---=============================================================
--- keybind state
---=============================================================
-local menu_keybind     = Enum.KeyCode.RightShift
+local menu_keybind      = Enum.KeyCode.RightShift
 local listening_for_key = false
+local listening_slot    = nil          -- "menu" or "cmd" for bind capture
+
+local cmd_keybind = Enum.KeyCode.Quote
 
 --=============================================================
 -- theme
@@ -36,7 +33,9 @@ local theme = {
     text_dim    = Color3.fromRGB(124, 124, 134),
     text_faint  = Color3.fromRGB(82, 82, 92),
     accent      = Color3.fromRGB(255, 32, 62),
+    accent_hover= Color3.fromRGB(215, 24, 50),
     accent_dim  = Color3.fromRGB(150, 22, 40),
+    accent_soft = Color3.fromRGB(200, 30, 55),
     green       = Color3.fromRGB(66, 220, 122),
     input       = Color3.fromRGB(24, 24, 30),
     track_off   = Color3.fromRGB(44, 44, 52),
@@ -59,66 +58,76 @@ local function create(class, props)
     if parent then inst.Parent = parent end
     return inst
 end
-
-local function corner(parent, radius)
-    return create("UICorner", { CornerRadius = UDim.new(0, radius or 6), Parent = parent })
-end
-
+local function corner(parent, radius) return create("UICorner", { CornerRadius = UDim.new(0, radius or 6), Parent = parent }) end
 local function add_stroke(parent, color, thickness, transparency)
-    return create("UIStroke", {
-        Color = color or theme.stroke,
-        Thickness = thickness or 1,
-        Transparency = transparency or 0,
-        Parent = parent,
-    })
+    return create("UIStroke", { Color = color or theme.stroke, Thickness = thickness or 1, Transparency = transparency or 0, Parent = parent })
 end
-
 local function pad(parent, top, right, bottom, left)
     return create("UIPadding", {
-        PaddingTop = UDim.new(0, top or 0),
-        PaddingRight = UDim.new(0, right or top or 0),
-        PaddingBottom = UDim.new(0, bottom or top or 0),
-        PaddingLeft = UDim.new(0, left or right or top or 0),
+        PaddingTop = UDim.new(0, top or 0), PaddingRight = UDim.new(0, right or top or 0),
+        PaddingBottom = UDim.new(0, bottom or top or 0), PaddingLeft = UDim.new(0, left or right or top or 0),
         Parent = parent,
     })
 end
-
 local function vlist(parent, gap)
-    return create("UIListLayout", {
-        Padding = UDim.new(0, gap or 0),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = parent,
-    })
+    return create("UIListLayout", { Padding = UDim.new(0, gap or 0), SortOrder = Enum.SortOrder.LayoutOrder, Parent = parent })
 end
-
 local order = 0
-local function next_order()
-    order += 1
-    return order
+local function next_order() order += 1 return order end
+local function log(fmt, ...) print("[jjs] " .. string.format(fmt, ...)) end
+local function fmt_num(v)
+    v = tonumber(v) or 0
+    if v == math.floor(v) then return tostring(math.floor(v)) end
+    local s = string.format("%.3f", v); return s:gsub("0+$", ""):gsub("%.$", "")
 end
 
-local function log(fmt, ...)
-    print("[jjs] " .. string.format(fmt, ...))
+-- color math
+local function hex_to_rgb(hex)
+    hex = tostring(hex):gsub("#", ""):lower()
+    if #hex ~= 6 then return 255, 50, 50 end
+    return tonumber(hex:sub(1,2), 16) or 255, tonumber(hex:sub(3,4), 16) or 50, tonumber(hex:sub(5,6), 16) or 50
+end
+local function rgb_to_hex(r, g, b)
+    return string.format("%02x%02x%02x", math.clamp(math.floor(r),0,255), math.clamp(math.floor(g),0,255), math.clamp(math.floor(b),0,255))
+end
+local function hsv_to_rgb(h, s, v)
+    h = h % 360
+    local c = v * s
+    local x = c * (1 - math.abs((h / 60) % 2 - 1))
+    local m = v - c
+    local r, g, b
+    if h < 60 then r, g, b = c, x, 0
+    elseif h < 120 then r, g, b = x, c, 0
+    elseif h < 180 then r, g, b = 0, c, x
+    elseif h < 240 then r, g, b = 0, x, c
+    elseif h < 300 then r, g, b = x, 0, c
+    else r, g, b = c, 0, x end
+    return (r + m) * 255, (g + m) * 255, (b + m) * 255
+end
+local function rgb_to_hsv(r, g, b)
+    r, g, b = r/255, g/255, b/255
+    local mx = math.max(r, g, b); local mn = math.min(r, g, b)
+    local d = mx - mn; local h
+    if d == 0 then h = 0
+    elseif mx == r then h = 60 * (((g - b) / d) % 6)
+    elseif mx == g then h = 60 * (((b - r) / d) + 2)
+    else h = 60 * (((r - g) / d) + 4) end
+    local s = mx == 0 and 0 or d / mx
+    return h, s, mx
 end
 
 --=============================================================
 -- gui host
 --=============================================================
 local function resolve_host()
-    local ok, res = pcall(function()
-        if type(gethui) == "function" then return gethui() end
-    end)
+    local ok, res = pcall(function() if type(gethui) == "function" then return gethui() end end)
     if ok and res then return res end
     return CoreGui
 end
-
 local function make_screengui(name)
     local gui = create("ScreenGui", {
-        Name = name,
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        DisplayOrder = 100,
+        Name = name, ResetOnSpawn = false, IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 100,
     })
     if type(syn) == "table" and syn.protect_gui then pcall(syn.protect_gui, gui) end
     if type(protect_gui) == "function" then pcall(protect_gui, gui) end
@@ -128,7 +137,6 @@ local function make_screengui(name)
     if not ok then gui.Parent = lp:WaitForChild("PlayerGui") end
     return gui
 end
-
 local gui = make_screengui("jjs_killer")
 
 --=============================================================
@@ -136,80 +144,84 @@ local gui = make_screengui("jjs_killer")
 --=============================================================
 local drag    = { active = false, frame = nil, start = nil, origin = nil }
 local fb_drag = { active = false, moved = false, btn = nil, start = nil, origin = nil }
-
 UserInputService.InputChanged:Connect(function(input)
     if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-
     if drag.active and drag.frame then
-        local delta = input.Position - drag.start
-        drag.frame.Position = UDim2.new(
-            drag.origin.X.Scale, drag.origin.X.Offset + delta.X,
-            drag.origin.Y.Scale, drag.origin.Y.Offset + delta.Y
-        )
+        local d = input.Position - drag.start
+        drag.frame.Position = UDim2.new(drag.origin.X.Scale, drag.origin.X.Offset + d.X, drag.origin.Y.Scale, drag.origin.Y.Offset + d.Y)
     end
-
     if fb_drag.active and fb_drag.btn then
-        local delta = input.Position - fb_drag.start
-        if delta.Magnitude > 3 then fb_drag.moved = true end
-        fb_drag.btn.Position = UDim2.new(
-            fb_drag.origin.X.Scale, fb_drag.origin.X.Offset + delta.X,
-            fb_drag.origin.Y.Scale, fb_drag.origin.Y.Offset + delta.Y
-        )
+        local d = input.Position - fb_drag.start
+        if d.Magnitude > 3 then fb_drag.moved = true end
+        fb_drag.btn.Position = UDim2.new(fb_drag.origin.X.Scale, fb_drag.origin.X.Offset + d.X, fb_drag.origin.Y.Scale, fb_drag.origin.Y.Offset + d.Y)
     end
 end)
-
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        drag.active = false
-        drag.frame = nil
-        fb_drag.active = false
-        fb_drag.btn = nil
+        drag.active = false; drag.frame = nil
+        fb_drag.active = false; fb_drag.btn = nil
     end
 end)
-
 local function make_draggable(frame, handle)
     handle = handle or frame
     handle.InputBegan:Connect(function(input)
         if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-        drag.active = true
-        drag.frame = frame
-        drag.start = input.Position
-        drag.origin = frame.Position
+        drag.active = true; drag.frame = frame; drag.start = input.Position; drag.origin = frame.Position
     end)
 end
 
 --=============================================================
 -- components
 --=============================================================
+local function make_check(parent, default_on, on_change)
+    local on = default_on and true or false
+    local box = create("TextButton", {
+        Size = UDim2.fromOffset(18, 18),
+        BackgroundColor3 = on and theme.accent or theme.input,
+        Text = "", AutoButtonColor = false, Parent = parent,
+    })
+    corner(box, 4)
+    local stroke = add_stroke(box, on and theme.accent or theme.stroke, 1.2)
+    local tick = create("TextLabel", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+        Text = "✓", Font = font_bold, TextSize = 12,
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextTransparency = on and 0 or 1, Parent = box,
+    })
+    local api = { frame = box }
+    function api.set(v, silent)
+        on = v and true or false
+        TweenService:Create(box, TweenInfo.new(0.1), { BackgroundColor3 = on and theme.accent or theme.input }):Play()
+        TweenService:Create(tick, TweenInfo.new(0.1), { TextTransparency = on and 0 or 1 }):Play()
+        stroke.Color = on and theme.accent or theme.stroke
+        if not silent and on_change then on_change(on) end
+    end
+    function api.get() return on end
+    box.MouseButton1Click:Connect(function() api.set(not on) end)
+    return api
+end
+
 local function make_switch(parent, default_on, on_change)
     local on = default_on and true or false
     local track = create("Frame", {
-        Size = UDim2.fromOffset(32, 16),
+        Size = UDim2.fromOffset(28, 14),
         BackgroundColor3 = on and theme.accent or theme.track_off,
         Parent = parent,
     })
-    corner(track, 8)
+    corner(track, 7)
     local knob = create("Frame", {
         Size = UDim2.fromOffset(10, 10),
         AnchorPoint = Vector2.new(0, 0.5),
         Position = on and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-        BackgroundColor3 = Color3.fromRGB(240, 240, 245),
-        Parent = track,
+        BackgroundColor3 = Color3.fromRGB(240, 240, 245), Parent = track,
     })
     corner(knob, 5)
-    local hit = create("TextButton", {
-        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = track,
-    })
-
+    local hit = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = track })
     local api = { frame = track }
-    function api.set(value, silent)
-        on = value and true or false
-        TweenService:Create(track, TweenInfo.new(0.14), {
-            BackgroundColor3 = on and theme.accent or theme.track_off,
-        }):Play()
-        TweenService:Create(knob, TweenInfo.new(0.14), {
-            Position = on and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-        }):Play()
+    function api.set(v, silent)
+        on = v and true or false
+        TweenService:Create(track, TweenInfo.new(0.14), { BackgroundColor3 = on and theme.accent or theme.track_off }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.14), { Position = on and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 2, 0.5, 0) }):Play()
         if not silent and on_change then on_change(on) end
     end
     function api.get() return on end
@@ -222,24 +234,35 @@ local function make_button(parent, text, width, height, on_click, opts)
     local bg = opts.bg or theme.panel_alt
     local b = create("TextButton", {
         Size = UDim2.fromOffset(width, height or 22),
-        BackgroundColor3 = bg,
-        Text = text,
-        Font = font_med,
-        TextSize = opts.textsize or 10,
+        BackgroundColor3 = bg, Text = text,
+        Font = font_med, TextSize = opts.textsize or 10,
         TextColor3 = opts.color or theme.text_dim,
-        AutoButtonColor = false,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        LayoutOrder = opts.layout_order or 0,
-        Parent = parent,
+        AutoButtonColor = false, TextTruncate = Enum.TextTruncate.AtEnd,
+        LayoutOrder = opts.layout_order or 0, Parent = parent,
     })
     corner(b, 4)
     add_stroke(b, opts.stroke or theme.stroke)
-    b.MouseEnter:Connect(function()
-        TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = opts.hover or theme.hover }):Play()
-    end)
-    b.MouseLeave:Connect(function()
-        TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = bg }):Play()
-    end)
+    b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = opts.hover or theme.hover }):Play() end)
+    b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = bg }):Play() end)
+    if on_click then b.MouseButton1Click:Connect(on_click) end
+    return b
+end
+
+local function make_red_button(parent, text, on_click, opts)
+    opts = opts or {}
+    local bg = opts.dim and theme.accent_soft or theme.accent
+    local hover = opts.dim and Color3.fromRGB(220, 40, 65) or theme.accent_hover
+    local b = create("TextButton", {
+        Size = UDim2.new(1, 0, 0, opts.height or 30),
+        BackgroundColor3 = bg, Text = text,
+        Font = font_bold, TextSize = opts.textsize or 11,
+        TextColor3 = Color3.fromRGB(255, 255, 255),
+        AutoButtonColor = false, LayoutOrder = opts.layout_order or next_order(),
+        Parent = parent,
+    })
+    corner(b, 5)
+    b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = hover }):Play() end)
+    b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = bg }):Play() end)
     if on_click then b.MouseButton1Click:Connect(on_click) end
     return b
 end
@@ -247,198 +270,483 @@ end
 local function make_input(parent, placeholder, default)
     local box = create("TextBox", {
         Size = UDim2.new(1, 0, 0, 24),
-        BackgroundColor3 = theme.input,
-        Text = default or "",
-        PlaceholderText = placeholder or "",
-        PlaceholderColor3 = theme.text_faint,
-        Font = font_ui,
-        TextSize = 11,
-        TextColor3 = theme.text,
+        BackgroundColor3 = theme.input, Text = default or "",
+        PlaceholderText = placeholder or "", PlaceholderColor3 = theme.text_faint,
+        Font = font_ui, TextSize = 11, TextColor3 = theme.text,
         TextXAlignment = Enum.TextXAlignment.Left,
-        ClearTextOnFocus = false,
-        Parent = parent,
+        ClearTextOnFocus = false, Parent = parent,
     })
-    corner(box, 4)
-    add_stroke(box, theme.stroke)
-    pad(box, 0, 8, 0, 8)
+    corner(box, 4); add_stroke(box, theme.stroke); pad(box, 0, 8, 0, 8)
     return box
 end
 
 local function input_row(parent, label_text, placeholder, default)
     local wrap = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 44),
-        BackgroundTransparency = 1,
-        LayoutOrder = next_order(),
-        Parent = parent,
+        Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1,
+        LayoutOrder = next_order(), Parent = parent,
     })
     create("TextLabel", {
-        Size = UDim2.new(1, 0, 0, 13),
-        BackgroundTransparency = 1,
-        Text = label_text,
-        Font = font_ui,
-        TextSize = 11,
-        TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = wrap,
+        Size = UDim2.new(1, 0, 0, 13), BackgroundTransparency = 1,
+        Text = label_text, Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = wrap,
     })
     local box = make_input(wrap, placeholder, default)
     box.Position = UDim2.new(0, 0, 0, 18)
     return box
 end
 
-local function toggle_row(parent, title, desc, default, changed)
+local function check_row(parent, title, desc, default, changed)
     local row = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        LayoutOrder = next_order(),
-        Parent = parent,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent,
     })
     create("TextLabel", {
-        Size = UDim2.new(1, -48, 0, 14),
-        BackgroundTransparency = 1,
-        Text = title,
-        Font = font_med,
-        TextSize = 12,
-        TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = row,
+        Size = UDim2.new(1, -34, 0, 14), BackgroundTransparency = 1,
+        Text = title, Font = font_med, TextSize = 12, TextColor3 = theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
     })
-    create("TextLabel", {
-        Position = UDim2.new(0, 0, 0, 16),
-        Size = UDim2.new(1, -48, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        Text = desc,
-        Font = font_ui,
-        TextSize = 11,
-        TextColor3 = theme.text_dim,
-        TextWrapped = true,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        Parent = row,
-    })
-    local sw = make_switch(row, default, changed)
-    sw.frame.Position = UDim2.new(1, -32, 0, 1)
+    if desc then
+        create("TextLabel", {
+            Position = UDim2.new(0, 0, 0, 16),
+            Size = UDim2.new(1, -34, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1, Text = desc,
+            Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+            TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top, Parent = row,
+        })
+    end
+    local chk = make_check(row, default, changed)
+    chk.frame.Position = UDim2.new(1, -18, 0, 0)
     return row
 end
 
 local function mini_toggle_row(parent, label_text, default, changed)
     local row = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 18),
-        BackgroundTransparency = 1,
-        LayoutOrder = next_order(),
-        Parent = parent,
+        Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1,
+        LayoutOrder = next_order(), Parent = parent,
     })
     create("TextLabel", {
-        Size = UDim2.new(1, -40, 1, 0),
-        BackgroundTransparency = 1,
-        Text = label_text,
-        Font = font_ui,
-        TextSize = 10,
-        TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = row,
+        Size = UDim2.new(1, -40, 1, 0), BackgroundTransparency = 1,
+        Text = label_text, Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
     })
     local sw = make_switch(row, default, changed)
-    sw.frame.Position = UDim2.new(1, -32, 0.5, -8)
+    sw.frame.Position = UDim2.new(1, -28, 0.5, -7)
     return sw
+end
+
+local function make_slider(parent, label, desc, min, max, default, step, on_change)
+    local row = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent,
+    })
+    vlist(row, 4)
+    local header = create("Frame", { Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, LayoutOrder = 1, Parent = row })
+    create("TextLabel", {
+        Size = UDim2.new(1, -70, 1, 0), BackgroundTransparency = 1, Text = label,
+        Font = font_med, TextSize = 12, TextColor3 = theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = header,
+    })
+    local value_lbl = create("TextLabel", {
+        Size = UDim2.fromOffset(70, 14), Position = UDim2.new(1, -70, 0, 0),
+        BackgroundTransparency = 1, Text = fmt_num(default),
+        Font = font_med, TextSize = 12, TextColor3 = theme.accent,
+        TextXAlignment = Enum.TextXAlignment.Right, Parent = header,
+    })
+    if desc then
+        create("TextLabel", {
+            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1, Text = desc,
+            Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+            TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2, Parent = row,
+        })
+    end
+    local wrap = create("Frame", { Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, LayoutOrder = 3, Parent = row })
+    local bar = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 4), Position = UDim2.new(0, 0, 0.5, -2),
+        BackgroundColor3 = theme.track_off, Parent = wrap,
+    })
+    corner(bar, 2)
+    local pct = math.clamp((default - min) / (max - min), 0, 1)
+    local fill = create("Frame", { Size = UDim2.new(pct, 0, 1, 0), BackgroundColor3 = theme.accent, Parent = bar })
+    corner(fill, 2)
+    local knob = create("Frame", {
+        Size = UDim2.fromOffset(12, 12), AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(pct, 0, 0.5, 0), BackgroundColor3 = Color3.fromRGB(240, 240, 245), Parent = bar,
+    })
+    corner(knob, 6)
+    local hit = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = wrap })
+
+    local current, dragging = default, false
+    local function apply(v, silent)
+        current = math.clamp(v, min, max)
+        if step then current = math.floor(current / step + 0.5) * step end
+        current = math.clamp(current, min, max)
+        local p = (current - min) / (max - min)
+        fill.Size = UDim2.new(p, 0, 1, 0)
+        knob.Position = UDim2.new(p, 0, 0.5, 0)
+        value_lbl.Text = fmt_num(current)
+        if not silent and on_change then on_change(current) end
+    end
+    local function from_x(x)
+        local rel = math.clamp((x - wrap.AbsolutePosition.X) / math.max(wrap.AbsoluteSize.X, 1), 0, 1)
+        apply(min + rel * (max - min))
+    end
+    hit.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true; from_x(input.Position.X) end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then from_x(input.Position.X) end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    return { set = function(v, s) apply(v, s) end, get = function() return current end }
+end
+
+local function make_segmented(parent, options, default_idx, on_change)
+    local row = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1,
+        LayoutOrder = next_order(), Parent = parent,
+    })
+    local btns = {}
+    local active = default_idx or 1
+    local n = #options
+    for i, opt in ipairs(options) do
+        local b = create("TextButton", {
+            Size = UDim2.new(1/n, -4, 1, 0),
+            Position = UDim2.new((i-1)/n, 0, 0, 0),
+            BackgroundColor3 = (i == active) and theme.accent or theme.panel_alt,
+            Text = opt, Font = font_med, TextSize = 10,
+            TextColor3 = (i == active) and Color3.fromRGB(255,255,255) or theme.text_dim,
+            AutoButtonColor = false, Parent = row,
+        })
+        corner(b, 4); btns[i] = b
+    end
+    local function set(i, silent)
+        active = i
+        for j, b in ipairs(btns) do
+            local is_a = j == i
+            b.BackgroundColor3 = is_a and theme.accent or theme.panel_alt
+            b.TextColor3 = is_a and Color3.fromRGB(255,255,255) or theme.text_dim
+        end
+        if not silent and on_change then on_change(i, options[i]) end
+    end
+    for i, b in ipairs(btns) do b.MouseButton1Click:Connect(function() set(i) end) end
+    return { set = function(i, s) set(i, s) end, get = function() return active, options[active] end }
+end
+
+-- setting button row (label + button on right — for keybinds)
+local function make_setting_button_row(parent, label, btn_text, on_click)
+    local row = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1,
+        LayoutOrder = next_order(), Parent = parent,
+    })
+    create("TextLabel", {
+        Size = UDim2.new(1, -110, 1, 0), BackgroundTransparency = 1, Text = label,
+        Font = font_med, TextSize = 11, TextColor3 = theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
+    })
+    local btn = create("TextButton", {
+        Size = UDim2.fromOffset(100, 22), AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        BackgroundColor3 = theme.input, Text = btn_text,
+        Font = font_ui, TextSize = 10, TextColor3 = theme.text,
+        AutoButtonColor = false, Parent = row,
+    })
+    corner(btn, 4); add_stroke(btn, theme.stroke)
+    if on_click then btn.MouseButton1Click:Connect(on_click) end
+    return btn
+end
+
+-- status row (label left, value right in accent)
+local function make_status_row(parent, label, value, value_color)
+    local row = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1,
+        LayoutOrder = next_order(), Parent = parent,
+    })
+    create("TextLabel", {
+        Size = UDim2.new(0.5, 0, 1, 0), BackgroundTransparency = 1, Text = label,
+        Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
+    })
+    local val = create("TextLabel", {
+        Size = UDim2.new(0.5, 0, 1, 0), Position = UDim2.new(0.5, 0, 0, 0),
+        BackgroundTransparency = 1, Text = value,
+        Font = font_med, TextSize = 11, TextColor3 = value_color or theme.accent,
+        TextXAlignment = Enum.TextXAlignment.Right, Parent = row,
+    })
+    return val
+end
+
+-- color picker popup (HSV)
+local function open_color_picker(anchor, initial_color, on_change)
+    if _G.__jjs_color_popup and _G.__jjs_color_popup.Parent then _G.__jjs_color_popup:Destroy() end
+    local h0, s0, v0 = rgb_to_hsv(initial_color.R * 255, initial_color.G * 255, initial_color.B * 255)
+    local h, s, v = h0, s0, v0
+
+    local popup = create("Frame", {
+        Size = UDim2.fromOffset(240, 224),
+        BackgroundColor3 = theme.panel,
+        ZIndex = 60, Parent = gui,
+    })
+    _G.__jjs_color_popup = popup
+    corner(popup, 6); add_stroke(popup, theme.stroke)
+
+    local abs_pos = anchor.AbsolutePosition
+    popup.Position = UDim2.fromOffset(abs_pos.X - 200, abs_pos.Y + anchor.AbsoluteSize.Y + 6)
+
+    local sv = create("Frame", {
+        Size = UDim2.fromOffset(216, 140),
+        Position = UDim2.fromOffset(12, 12),
+        BackgroundColor3 = Color3.fromRGB(255, 0, 0), Parent = popup,
+    })
+    corner(sv, 4)
+    local hue_base = create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(255, 0, 0), Parent = sv })
+    corner(hue_base, 4)
+    create("UIGradient", {
+        Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,0,0)) }),
+        Parent = hue_base,
+    })
+    local dark_over = create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(0,0,0), Parent = sv })
+    corner(dark_over, 4)
+    create("UIGradient", {
+        Rotation = 90,
+        Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) }),
+        Parent = dark_over,
+    })
+    local sv_hit = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = sv })
+    local cursor = create("Frame", {
+        Size = UDim2.fromOffset(10, 10), AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(s, 0, 1 - v, 0), BackgroundTransparency = 1, ZIndex = 2, Parent = sv,
+    })
+    corner(cursor, 5); add_stroke(cursor, Color3.fromRGB(255,255,255), 2)
+
+    local hue_bar = create("Frame", { Size = UDim2.fromOffset(216, 14), Position = UDim2.fromOffset(12, 162), Parent = popup })
+    corner(hue_bar, 4)
+    create("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0.000, Color3.fromRGB(255, 0, 0)),
+            ColorSequenceKeypoint.new(0.167, Color3.fromRGB(255, 255, 0)),
+            ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0, 255, 0)),
+            ColorSequenceKeypoint.new(0.500, Color3.fromRGB(0, 255, 255)),
+            ColorSequenceKeypoint.new(0.667, Color3.fromRGB(0, 0, 255)),
+            ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255, 0, 255)),
+            ColorSequenceKeypoint.new(1.000, Color3.fromRGB(255, 0, 0)),
+        }),
+        Parent = hue_bar,
+    })
+    local hue_hit = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = hue_bar })
+    local hue_cursor = create("Frame", {
+        Size = UDim2.fromOffset(4, 18), AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(h / 360, 0, 0.5, 0),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255), Parent = hue_bar,
+    })
+    corner(hue_cursor, 2); add_stroke(hue_cursor, theme.bg, 1)
+
+    local hex_box = create("TextBox", {
+        Size = UDim2.fromOffset(216, 24), Position = UDim2.fromOffset(12, 186),
+        BackgroundColor3 = theme.input, Text = rgb_to_hex(initial_color.R*255, initial_color.G*255, initial_color.B*255),
+        Font = font_mono, TextSize = 11, TextColor3 = theme.text,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        ClearTextOnFocus = false, Parent = popup,
+    })
+    corner(hex_box, 4); add_stroke(hex_box, theme.stroke)
+
+    local function apply(apply_callback)
+        local r, g, b = hsv_to_rgb(h, s, v)
+        hue_base.BackgroundColor3 = Color3.fromRGB(hsv_to_rgb(h, 1, 1))
+        cursor.Position = UDim2.new(s, 0, 1 - v, 0)
+        hue_cursor.Position = UDim2.new(h / 360, 0, 0.5, 0)
+        hex_box.Text = rgb_to_hex(r, g, b)
+        if apply_callback and on_change then on_change(Color3.fromRGB(r, g, b)) end
+    end
+    apply(false)
+
+    local sv_drag, hue_drag = false, false
+    local function sv_from_xy(x, y)
+        s = math.clamp((x - sv.AbsolutePosition.X) / sv.AbsoluteSize.X, 0, 1)
+        v = 1 - math.clamp((y - sv.AbsolutePosition.Y) / sv.AbsoluteSize.Y, 0, 1)
+        apply(true)
+    end
+    local function hue_from_x(x)
+        h = math.clamp((x - hue_bar.AbsolutePosition.X) / hue_bar.AbsoluteSize.X, 0, 1) * 360
+        apply(true)
+    end
+    sv_hit.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then sv_drag = true; sv_from_xy(input.Position.X, input.Position.Y) end
+    end)
+    hue_hit.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then hue_drag = true; hue_from_x(input.Position.X) end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+        if sv_drag then sv_from_xy(input.Position.X, input.Position.Y) end
+        if hue_drag then hue_from_x(input.Position.X) end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then sv_drag = false; hue_drag = false end
+    end)
+    hex_box.FocusLost:Connect(function()
+        local r, g, b = hex_to_rgb(hex_box.Text)
+        h, s, v = rgb_to_hsv(r, g, b)
+        apply(true)
+    end)
+
+    -- click outside to close
+    task.spawn(function()
+        local started = tick()
+        while popup.Parent and tick() - started > 0.2 do
+            if UserInputService:GetFocusedTextBox() == nil then break end
+            task.wait(0.1)
+        end
+        while popup.Parent do
+            local mouse = UserInputService:GetMouseLocation()
+            local pp = popup.AbsolutePosition; local ps = popup.AbsoluteSize
+            if not (mouse.X >= pp.X and mouse.X <= pp.X + ps.X and mouse.Y >= pp.Y and mouse.Y <= pp.Y + ps.Y) then
+                if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+                    task.wait(0.05)
+                    if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+                        popup:Destroy(); return
+                    end
+                end
+            end
+            task.wait(0.05)
+        end
+    end)
+end
+
+-- palette
+local palette = {
+    Color3.fromRGB(255, 50, 50),
+    Color3.fromRGB(255, 145, 60),
+    Color3.fromRGB(255, 215, 60),
+    Color3.fromRGB(90, 220, 110),
+    Color3.fromRGB(60, 155, 240),
+    Color3.fromRGB(160, 105, 240),
+    Color3.fromRGB(240, 100, 200),
+    Color3.fromRGB(240, 240, 240),
+}
+
+local function make_color_row(parent, label, initial_color, on_change)
+    local row = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1,
+        LayoutOrder = next_order(), Parent = parent,
+    })
+    create("TextLabel", {
+        Size = UDim2.new(0, 110, 1, 0), BackgroundTransparency = 1, Text = label,
+        Font = font_med, TextSize = 11, TextColor3 = theme.text,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
+    })
+    local swatch_wrap = create("Frame", {
+        Size = UDim2.new(0, 180, 0, 16), Position = UDim2.new(0, 110, 0.5, -8),
+        BackgroundTransparency = 1, Parent = row,
+    })
+    create("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = swatch_wrap,
+    })
+
+    local current_color = initial_color
+    local preview_btn
+
+    for i, col in ipairs(palette) do
+        local sw = create("TextButton", {
+            Size = UDim2.fromOffset(14, 14), BackgroundColor3 = col,
+            Text = "", AutoButtonColor = false,
+            LayoutOrder = i, Parent = swatch_wrap,
+        })
+        corner(sw, 7); add_stroke(sw, theme.stroke, 1)
+        sw.MouseButton1Click:Connect(function()
+            current_color = col
+            if preview_btn then preview_btn.BackgroundColor3 = col end
+            if on_change then on_change(col) end
+        end)
+    end
+
+    preview_btn = create("TextButton", {
+        Size = UDim2.fromOffset(66, 22), AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        BackgroundColor3 = initial_color,
+        Text = "", AutoButtonColor = false, Parent = row,
+    })
+    corner(preview_btn, 4); add_stroke(preview_btn, theme.stroke)
+    preview_btn.MouseButton1Click:Connect(function()
+        open_color_picker(preview_btn, current_color, function(col)
+            current_color = col
+            preview_btn.BackgroundColor3 = col
+            if on_change then on_change(col) end
+        end)
+    end)
+
+    return { get = function() return current_color end, set = function(c) current_color = c; preview_btn.BackgroundColor3 = c end }
 end
 
 local function section(parent, title)
     local wrap = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        LayoutOrder = next_order(),
-        Parent = parent,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent,
     })
-    local header = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 26),
-        BackgroundColor3 = theme.panel_alt,
-        Parent = wrap,
+    vlist(wrap, 8)
+    local header = create("TextButton", {
+        Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = theme.panel_alt,
+        Text = "", AutoButtonColor = false, LayoutOrder = 1, Parent = wrap,
     })
-    corner(header, 5)
-    add_stroke(header, theme.stroke_soft)
-    create("Frame", {
-        Size = UDim2.new(0, 3, 0, 12),
-        Position = UDim2.new(0, 8, 0.5, -6),
-        BackgroundColor3 = theme.accent,
-        Parent = header,
-    })
+    corner(header, 5); add_stroke(header, theme.stroke_soft)
+    create("Frame", { Size = UDim2.new(0, 3, 0, 12), Position = UDim2.new(0, 8, 0.5, -6), BackgroundColor3 = theme.accent, Parent = header })
     create("TextLabel", {
-        Position = UDim2.new(0, 18, 0, 0),
-        Size = UDim2.new(1, -24, 1, 0),
-        BackgroundTransparency = 1,
-        Text = title,
-        Font = font_med,
-        TextSize = 11,
-        TextColor3 = theme.accent,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = header,
+        Position = UDim2.new(0, 18, 0, 0), Size = UDim2.new(1, -42, 1, 0),
+        BackgroundTransparency = 1, Text = title,
+        Font = font_med, TextSize = 11, TextColor3 = theme.accent,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = header,
+    })
+    local chev = create("TextLabel", {
+        Size = UDim2.fromOffset(24, 26), Position = UDim2.new(1, -24, 0, 0),
+        BackgroundTransparency = 1, Text = "⌄",
+        Font = font_ui, TextSize = 12, TextColor3 = theme.text_faint, Parent = header,
     })
     local body = create("Frame", {
-        Position = UDim2.new(0, 0, 0, 34),
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        Parent = wrap,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = 2, Parent = wrap,
     })
     vlist(body, 14)
+    local open = true
+    header.MouseButton1Click:Connect(function()
+        open = not open; body.Visible = open; chev.Text = open and "⌄" or "›"
+    end)
     return body
 end
 
 --=============================================================
--- floating toggle button (always visible)
+-- floating toggle
 --=============================================================
 local floating = create("TextButton", {
-    Name = "floating_toggle",
-    Size = UDim2.fromOffset(88, 26),
-    Position = UDim2.fromOffset(20, 20),
-    BackgroundColor3 = theme.panel,
-    Text = "",
-    AutoButtonColor = false,
-    ClipsDescendants = true,
-    ZIndex = 5,
-    Parent = gui,
+    Name = "floating_toggle", Size = UDim2.fromOffset(88, 26),
+    Position = UDim2.fromOffset(20, 20), BackgroundColor3 = theme.panel,
+    Text = "", AutoButtonColor = false, ClipsDescendants = true, ZIndex = 5, Parent = gui,
 })
 corner(floating, 13)
 local fb_stroke = add_stroke(floating, theme.accent, 1.2)
-
 local fb_label = create("TextLabel", {
-    Size = UDim2.fromScale(1, 1),
-    BackgroundTransparency = 1,
-    Text = "JJS KILLER",
-    Font = font_bold,
-    TextSize = 10,
-    TextColor3 = theme.accent,
-    Parent = floating,
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+    Text = "JJS KILLER", Font = font_bold, TextSize = 10,
+    TextColor3 = theme.accent, Parent = floating,
 })
-
 local fb_dot = create("Frame", {
-    Size = UDim2.fromOffset(5, 5),
-    Position = UDim2.new(1, -13, 0.5, -2.5),
-    BackgroundColor3 = theme.accent,
-    Parent = floating,
+    Size = UDim2.fromOffset(5, 5), Position = UDim2.new(1, -13, 0.5, -2.5),
+    BackgroundColor3 = theme.accent, Parent = floating,
 })
 corner(fb_dot, 3)
-
-floating.MouseEnter:Connect(function()
-    TweenService:Create(floating, TweenInfo.new(0.12), { BackgroundColor3 = theme.hover }):Play()
-end)
-floating.MouseLeave:Connect(function()
-    TweenService:Create(floating, TweenInfo.new(0.12), { BackgroundColor3 = theme.panel }):Play()
-end)
-
+floating.MouseEnter:Connect(function() TweenService:Create(floating, TweenInfo.new(0.12), { BackgroundColor3 = theme.hover }):Play() end)
+floating.MouseLeave:Connect(function() TweenService:Create(floating, TweenInfo.new(0.12), { BackgroundColor3 = theme.panel }):Play() end)
 floating.InputBegan:Connect(function(input)
     if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-    fb_drag.active = true
-    fb_drag.moved = false
-    fb_drag.btn = floating
-    fb_drag.start = input.Position
-    fb_drag.origin = floating.Position
+    fb_drag.active = true; fb_drag.moved = false
+    fb_drag.btn = floating; fb_drag.start = input.Position; fb_drag.origin = floating.Position
 end)
-
 local function update_floating_state(show)
     if show then
         fb_stroke.Color = theme.stroke
@@ -452,70 +760,42 @@ local function update_floating_state(show)
 end
 
 --=============================================================
--- main window shell
+-- main window
 --=============================================================
 local win = create("Frame", {
-    Name = "main",
-    Size = UDim2.fromOffset(760, 502),
-    Position = UDim2.new(0.5, -380, 0.5, -251),
-    BackgroundColor3 = theme.bg,
-    ClipsDescendants = true,
-    Visible = true,
-    ZIndex = 1,
-    Parent = gui,
+    Name = "main", Size = UDim2.fromOffset(800, 520),
+    Position = UDim2.new(0.5, -400, 0.5, -260),
+    BackgroundColor3 = theme.bg, ClipsDescendants = true, ZIndex = 1, Parent = gui,
 })
-corner(win, 8)
-add_stroke(win, theme.stroke_soft)
-
-local topbar = create("Frame", {
-    Size = UDim2.new(1, 0, 0, 34),
-    BackgroundColor3 = theme.panel,
-    Parent = win,
-})
+corner(win, 8); add_stroke(win, theme.stroke_soft)
+local topbar = create("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = theme.panel, Parent = win })
 create("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = theme.stroke_soft, Parent = topbar })
-
 local badge = create("Frame", {
-    Size = UDim2.fromOffset(78, 18),
-    Position = UDim2.new(0, 10, 0.5, -9),
-    BackgroundColor3 = theme.accent,
-    Parent = topbar,
+    Size = UDim2.fromOffset(38, 18), Position = UDim2.new(0, 10, 0.5, -9),
+    BackgroundColor3 = theme.accent, Parent = topbar,
 })
 corner(badge, 4)
+create("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "SHO", Font = font_bold, TextSize = 10, TextColor3 = Color3.fromRGB(255,255,255), Parent = badge })
 create("TextLabel", {
-    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "JJS KILLER",
-    Font = font_bold, TextSize = 10, TextColor3 = Color3.fromRGB(255, 255, 255), Parent = badge,
-})
-
-create("TextLabel", {
-    Size = UDim2.fromOffset(100, 14), Position = UDim2.new(0, 94, 0.5, -7),
+    Size = UDim2.fromOffset(100, 14), Position = UDim2.new(0, 56, 0.5, -7),
     BackgroundTransparency = 1, Text = "VERSION 2.0.1",
     Font = font_mono, TextSize = 9, TextColor3 = theme.text_dim,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = topbar,
 })
-
-local paid = create("Frame", {
-    Size = UDim2.fromOffset(32, 14), Position = UDim2.new(0, 200, 0.5, -7),
-    BackgroundTransparency = 1, Parent = topbar,
-})
-corner(paid, 3)
-add_stroke(paid, theme.accent_dim)
-create("TextLabel", {
-    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "PAID",
-    Font = font_med, TextSize = 8, TextColor3 = theme.accent, Parent = paid,
-})
-
-local mag = create("Frame", {
-    Size = UDim2.fromOffset(14, 14), Position = UDim2.new(1, -56, 0.5, -7),
-    BackgroundTransparency = 1, Parent = topbar,
-})
+local paid = create("Frame", { Size = UDim2.fromOffset(32, 14), Position = UDim2.new(0, 156, 0.5, -7), BackgroundTransparency = 1, Parent = topbar })
+corner(paid, 3); add_stroke(paid, theme.accent_dim)
+create("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "PAID", Font = font_med, TextSize = 8, TextColor3 = theme.accent, Parent = paid })
+local mag = create("Frame", { Size = UDim2.fromOffset(14, 14), Position = UDim2.new(1, -86, 0.5, -7), BackgroundTransparency = 1, Parent = topbar })
 local ring = create("Frame", { Size = UDim2.fromOffset(9, 9), BackgroundTransparency = 1, Parent = mag })
-corner(ring, 5)
-add_stroke(ring, theme.text_dim, 1.2)
-create("Frame", {
-    Size = UDim2.fromOffset(2, 5), Position = UDim2.new(0, 8, 0, 8),
-    Rotation = 45, BackgroundColor3 = theme.text_dim, Parent = mag,
+corner(ring, 5); add_stroke(ring, theme.text_dim, 1.2)
+create("Frame", { Size = UDim2.fromOffset(2, 5), Position = UDim2.new(0, 8, 0, 8), Rotation = 45, BackgroundColor3 = theme.text_dim, Parent = mag })
+local minimize = create("TextButton", {
+    Size = UDim2.fromOffset(30, 34), Position = UDim2.new(1, -64, 0, 0),
+    BackgroundTransparency = 1, Text = "—", Font = font_ui, TextSize = 12,
+    TextColor3 = theme.text_dim, AutoButtonColor = false, Parent = topbar,
 })
-
+minimize.MouseEnter:Connect(function() minimize.TextColor3 = theme.text end)
+minimize.MouseLeave:Connect(function() minimize.TextColor3 = theme.text_dim end)
 local close = create("TextButton", {
     Size = UDim2.fromOffset(34, 34), Position = UDim2.new(1, -34, 0, 0),
     BackgroundTransparency = 1, Text = "✕", Font = font_ui, TextSize = 12,
@@ -523,42 +803,25 @@ local close = create("TextButton", {
 })
 close.MouseEnter:Connect(function() close.TextColor3 = theme.accent end)
 close.MouseLeave:Connect(function() close.TextColor3 = theme.text_dim end)
-
 make_draggable(win, topbar)
 
 local body = create("Frame", {
-    Size = UDim2.new(1, 0, 1, -34 - 24),
-    Position = UDim2.new(0, 0, 0, 34),
-    BackgroundTransparency = 1,
-    Parent = win,
+    Size = UDim2.new(1, 0, 1, -34 - 24), Position = UDim2.new(0, 0, 0, 34),
+    BackgroundTransparency = 1, Parent = win,
 })
-
-local sidebar = create("Frame", {
-    Size = UDim2.new(0, 150, 1, 0),
-    BackgroundColor3 = theme.sidebar,
-    Parent = body,
-})
-pad(sidebar, 8, 8, 8, 8)
-vlist(sidebar, 2)
-
+local sidebar = create("Frame", { Size = UDim2.new(0, 150, 1, 0), BackgroundColor3 = theme.sidebar, Parent = body })
+pad(sidebar, 8, 8, 8, 8); vlist(sidebar, 1)
 local content = create("Frame", {
-    Size = UDim2.new(1, -150 - 190, 1, 0),
-    Position = UDim2.new(0, 150, 0, 0),
-    BackgroundColor3 = theme.content,
-    Parent = body,
+    Size = UDim2.new(1, -150 - 190, 1, 0), Position = UDim2.new(0, 150, 0, 0),
+    BackgroundColor3 = theme.content, Parent = body,
 })
 pad(content, 12, 6, 12, 14)
 local content_area = content
-
 local rpanel = create("Frame", {
-    Size = UDim2.new(0, 190, 1, 0),
-    Position = UDim2.new(1, -190, 0, 0),
-    BackgroundColor3 = theme.panel,
-    Parent = body,
+    Size = UDim2.new(0, 190, 1, 0), Position = UDim2.new(1, -190, 0, 0),
+    BackgroundColor3 = theme.panel, Parent = body,
 })
-pad(rpanel, 12, 12, 12, 12)
-vlist(rpanel, 8)
-
+pad(rpanel, 12, 12, 12, 12); vlist(rpanel, 8)
 create("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(0, 149, 0, 0), BackgroundColor3 = theme.stroke_soft, Parent = body })
 create("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -190, 0, 0), BackgroundColor3 = theme.stroke_soft, Parent = body })
 
@@ -566,16 +829,12 @@ create("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -190, 0,
 -- status bar
 --=============================================================
 local vessel_state = "King of Curses"
-
 local function status_bar(parent)
     local bar = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 24),
-        Position = UDim2.new(0, 0, 1, -24),
-        BackgroundColor3 = theme.panel,
-        Parent = parent,
+        Size = UDim2.new(1, 0, 0, 24), Position = UDim2.new(0, 0, 1, -24),
+        BackgroundColor3 = theme.panel, Parent = parent,
     })
     create("Frame", { Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = theme.stroke_soft, Parent = bar })
-
     local vessel = create("TextButton", {
         Size = UDim2.new(0, 150, 1, 0), Position = UDim2.new(0, 8, 0, 0),
         BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = bar,
@@ -586,17 +845,14 @@ local function status_bar(parent)
         Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
         TextXAlignment = Enum.TextXAlignment.Left, Parent = vessel,
     })
-
     local menu = create("Frame", {
         Size = UDim2.fromOffset(140, 66), Position = UDim2.new(0, 8, 0, -70),
         BackgroundColor3 = theme.panel_alt, Visible = false, ZIndex = 20, Parent = bar,
     })
-    corner(menu, 4)
-    add_stroke(menu, theme.stroke)
-    local options = { "King of Curses", "Honored One", "Disaster Flames" }
-    for i, opt in ipairs(options) do
+    corner(menu, 4); add_stroke(menu, theme.stroke)
+    for i, opt in ipairs({ "King of Curses", "Honored One", "Disaster Flames" }) do
         local o = create("TextButton", {
-            Size = UDim2.new(1, 0, 0, 22), Position = UDim2.new(0, 0, 0, (i - 1) * 22),
+            Size = UDim2.new(1, 0, 0, 22), Position = UDim2.new(0, 0, 0, (i-1)*22),
             BackgroundTransparency = 1, Text = "  " .. opt,
             Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
             TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, Parent = menu,
@@ -610,13 +866,10 @@ local function status_bar(parent)
         end)
     end
     vessel.MouseButton1Click:Connect(function() menu.Visible = not menu.Visible end)
-
     local function indicator(text, dot_color, right_x, w)
         local wrap = create("Frame", {
-            Size = UDim2.fromOffset(w, 24),
-            AnchorPoint = Vector2.new(1, 0),
-            Position = UDim2.new(1, -right_x, 0, 0),
-            BackgroundTransparency = 1, Parent = bar,
+            Size = UDim2.fromOffset(w, 24), AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -right_x, 0, 0), BackgroundTransparency = 1, Parent = bar,
         })
         local dot = create("Frame", {
             Size = UDim2.fromOffset(5, 5), Position = UDim2.new(0, 0, 0.5, -2),
@@ -630,43 +883,32 @@ local function status_bar(parent)
             TextXAlignment = Enum.TextXAlignment.Left, Parent = wrap,
         })
     end
-
-    indicator("Red version", theme.accent, 12, 80)
-    indicator("Connected to webserver", theme.green, 108, 136)
-    indicator("Status", theme.green, 260, 48)
+    indicator("Status", theme.green, 12, 60)
+    indicator("Connected to webserver", theme.green, 82, 150)
+    indicator("Paid Version", theme.accent, 240, 90)
     return bar
 end
-
 status_bar(win)
 
 --=============================================================
--- pages
+-- pages / nav
 --=============================================================
 local pages = {}
-
 local function new_page(id)
     local page = create("ScrollingFrame", {
-        Name = id,
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 3,
-        ScrollBarImageColor3 = Color3.fromRGB(70, 70, 80),
+        Name = id, Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        ScrollBarThickness = 3, ScrollBarImageColor3 = Color3.fromRGB(70, 70, 80),
         ScrollBarImageTransparency = 0.35,
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        CanvasSize = UDim2.new(0, 0, 0, 0),
-        Visible = false,
-        Parent = content_area,
+        CanvasSize = UDim2.new(0, 0, 0, 0), Visible = false, Parent = content_area,
     })
-    pad(page, 0, 10, 16, 0)
-    vlist(page, 16)
+    pad(page, 0, 10, 16, 0); vlist(page, 16)
     pages[id] = page
     return page
 end
-
 local nav_items = {}
 local current_page = nil
-
 local function set_page(id)
     current_page = id
     for key, item in pairs(nav_items) do
@@ -674,71 +916,30 @@ local function set_page(id)
         item.label.TextColor3 = active and theme.text or theme.text_dim
         item.label.Font = active and font_med or font_ui
         item.bar.Visible = active
-        item.row.BackgroundTransparency = 1
     end
-    for key, page in pairs(pages) do
-        page.Visible = key == id
-    end
-    if pages[id] then
-        pages[id].CanvasPosition = Vector2.new(0, 0)
-    end
+    for key, page in pairs(pages) do page.Visible = key == id end
+    if pages[id] then pages[id].CanvasPosition = Vector2.new(0, 0) end
 end
-
-local function nav_spacer(h)
-    create("Frame", {
-        Size = UDim2.new(1, 0, 0, h or 6),
-        BackgroundTransparency = 1,
-        LayoutOrder = next_order(),
-        Parent = sidebar,
-    })
-end
-
-local function add_nav_group(title)
-    create("TextLabel", {
-        Size = UDim2.new(1, 0, 0, 18),
-        BackgroundTransparency = 1,
-        Text = title,
-        Font = font_med,
-        TextSize = 9,
-        TextColor3 = theme.text_faint,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        LayoutOrder = next_order(),
-        Parent = sidebar,
-    })
-end
-
 local function add_nav_item(label_text, id)
     local row = create("TextButton", {
-        Size = UDim2.new(1, 0, 0, 20),
-        BackgroundColor3 = theme.panel,
-        BackgroundTransparency = 1,
-        Text = "", AutoButtonColor = false,
-        LayoutOrder = next_order(),
-        Parent = sidebar,
+        Size = UDim2.new(1, 0, 0, 20), BackgroundColor3 = theme.panel,
+        BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+        LayoutOrder = next_order(), Parent = sidebar,
     })
     corner(row, 4)
     local bar = create("Frame", {
-        Size = UDim2.new(0, 2, 0, 10),
-        Position = UDim2.new(0, 6, 0.5, -5),
-        BackgroundColor3 = theme.accent,
-        Visible = false, Parent = row,
+        Size = UDim2.new(0, 2, 0, 10), Position = UDim2.new(0, 6, 0.5, -5),
+        BackgroundColor3 = theme.accent, Visible = false, Parent = row,
     })
     corner(bar, 1)
     local label = create("TextLabel", {
-        Position = UDim2.new(0, 16, 0, 0),
-        Size = UDim2.new(1, -20, 1, 0),
-        BackgroundTransparency = 1,
-        Text = label_text,
-        Font = font_ui,
-        TextSize = 11,
-        TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = row,
+        Position = UDim2.new(0, 16, 0, 0), Size = UDim2.new(1, -20, 1, 0),
+        BackgroundTransparency = 1, Text = label_text,
+        Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
     })
     row.MouseEnter:Connect(function()
-        if current_page ~= id then
-            TweenService:Create(row, TweenInfo.new(0.1), { BackgroundTransparency = 0.4 }):Play()
-        end
+        if current_page ~= id then TweenService:Create(row, TweenInfo.new(0.1), { BackgroundTransparency = 0.4 }):Play() end
     end)
     row.MouseLeave:Connect(function()
         TweenService:Create(row, TweenInfo.new(0.1), { BackgroundTransparency = 1 }):Play()
@@ -747,48 +948,52 @@ local function add_nav_item(label_text, id)
     nav_items[id] = { row = row, label = label, bar = bar }
     return row
 end
+local function add_collapsible_group(title, items)
+    local group_row = create("TextButton", {
+        Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1,
+        Text = "", AutoButtonColor = false, LayoutOrder = next_order(), Parent = sidebar,
+    })
+    create("TextLabel", {
+        Size = UDim2.new(1, -20, 1, 0), BackgroundTransparency = 1,
+        Text = title, Font = font_med, TextSize = 9, TextColor3 = theme.text_faint,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = group_row,
+    })
+    local chev = create("TextLabel", {
+        Size = UDim2.fromOffset(20, 20), Position = UDim2.new(1, -20, 0, 0),
+        BackgroundTransparency = 1, Text = "⌄",
+        Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim, Parent = group_row,
+    })
+    local rows = {}
+    for _, item in ipairs(items) do table.insert(rows, add_nav_item(item[1], item[2])) end
+    local open = true
+    group_row.MouseButton1Click:Connect(function()
+        open = not open
+        for _, r in ipairs(rows) do r.Visible = open end
+        chev.Text = open and "⌄" or "›"
+    end)
+end
+local function nav_spacer(h)
+    create("Frame", { Size = UDim2.new(1, 0, 0, h or 6), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = sidebar })
+end
 
 --=============================================================
--- auto parry builder window
+-- parry builder window
 --=============================================================
 local parry_window, anim_list, time_label, seek_fill, speed_label
 local anim_id_box, parry_delay_box
-local preview_animation, set_speed, replay_preview
-local nearest_player, refresh_row_visibility, add_detected_row
-
-local preview = {
-    track = nil,
-    speed = 1,
-    last_id = nil,
-    rig = nil,
-    animator = nil,
-    head = nil,
-    hair = nil,
-    root = nil,
-}
-
+local preview_animation, set_speed, replay_preview, refresh_row_visibility, add_detected_row
+local preview = { track = nil, speed = 1, last_id = nil, rig = nil, animator = nil, head = nil, hair = nil, root = nil }
 local detected_rows, detected_seen = {}, {}
 local tgt_all = true
 local hooked_animators = {}
-
 parry_window = create("Frame", {
-    Name = "parry_builder",
-    Size = UDim2.fromOffset(880, 470),
+    Name = "parry_builder", Size = UDim2.fromOffset(880, 470),
     Position = UDim2.new(0.5, -440, 0.5, -235),
-    BackgroundColor3 = theme.bg,
-    ClipsDescendants = true,
-    Visible = false,
-    ZIndex = 10,
-    Parent = gui,
+    BackgroundColor3 = theme.bg, ClipsDescendants = true,
+    Visible = false, ZIndex = 10, Parent = gui,
 })
-corner(parry_window, 8)
-add_stroke(parry_window, theme.stroke)
-
-local p_header = create("Frame", {
-    Size = UDim2.new(1, 0, 0, 36),
-    BackgroundColor3 = theme.panel,
-    Parent = parry_window,
-})
+corner(parry_window, 8); add_stroke(parry_window, theme.stroke)
+local p_header = create("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = theme.panel, Parent = parry_window })
 create("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = theme.stroke_soft, Parent = p_header })
 create("TextLabel", {
     Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 14, 0, 0),
@@ -805,62 +1010,30 @@ p_close.MouseEnter:Connect(function() p_close.TextColor3 = theme.accent end)
 p_close.MouseLeave:Connect(function() p_close.TextColor3 = theme.text_dim end)
 p_close.MouseButton1Click:Connect(function() parry_window.Visible = false end)
 make_draggable(parry_window, p_header)
-
 local p_body = create("Frame", {
-    Size = UDim2.new(1, 0, 1, -36 - 24),
-    Position = UDim2.new(0, 0, 0, 36),
-    BackgroundTransparency = 1,
-    Parent = parry_window,
+    Size = UDim2.new(1, 0, 1, -36 - 24), Position = UDim2.new(0, 0, 0, 36),
+    BackgroundTransparency = 1, Parent = parry_window,
 })
-
-local col_left = create("Frame", {
-    Size = UDim2.new(0, 300, 1, 0),
-    BackgroundTransparency = 1,
-    Parent = p_body,
-})
-local col_mid = create("Frame", {
-    Size = UDim2.new(1, -300 - 270, 1, 0),
-    Position = UDim2.new(0, 300, 0, 0),
-    BackgroundTransparency = 1,
-    Parent = p_body,
-})
-local col_right = create("Frame", {
-    Size = UDim2.new(0, 270, 1, 0),
-    Position = UDim2.new(1, -270, 0, 0),
-    BackgroundTransparency = 1,
-    Parent = p_body,
-})
-create("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(0, 0, 0, 0), BackgroundColor3 = theme.stroke_soft, Parent = col_mid })
-create("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(0, 0, 0, 0), BackgroundColor3 = theme.stroke_soft, Parent = col_right })
-
--- left column: viewport + dummy
+local col_left = create("Frame", { Size = UDim2.new(0, 300, 1, 0), BackgroundTransparency = 1, Parent = p_body })
+local col_mid  = create("Frame", { Size = UDim2.new(1, -300 - 270, 1, 0), Position = UDim2.new(0, 300, 0, 0), BackgroundTransparency = 1, Parent = p_body })
+local col_right= create("Frame", { Size = UDim2.new(0, 270, 1, 0), Position = UDim2.new(1, -270, 0, 0), BackgroundTransparency = 1, Parent = p_body })
+create("Frame", { Size = UDim2.new(0, 1, 1, 0), BackgroundColor3 = theme.stroke_soft, Parent = col_mid })
+create("Frame", { Size = UDim2.new(0, 1, 1, 0), BackgroundColor3 = theme.stroke_soft, Parent = col_right })
 local vpf = create("ViewportFrame", {
-    Size = UDim2.fromOffset(276, 232),
-    Position = UDim2.fromOffset(12, 12),
+    Size = UDim2.fromOffset(276, 232), Position = UDim2.fromOffset(12, 12),
     BackgroundColor3 = Color3.fromRGB(9, 9, 12),
     Ambient = Color3.fromRGB(130, 130, 140),
-    LightDirection = Vector3.new(-0.4, -1, -0.6),
-    Parent = col_left,
+    LightDirection = Vector3.new(-0.4, -1, -0.6), Parent = col_left,
 })
-corner(vpf, 6)
-add_stroke(vpf, theme.stroke_soft)
-
+corner(vpf, 6); add_stroke(vpf, theme.stroke_soft)
 local function build_preview_rig(viewport)
     local world = create("WorldModel", { Parent = viewport })
     local model = create("Model", { Name = "PreviewRig", Parent = world })
-
     local function mk(name, size, color, pos)
-        return create("Part", {
-            Name = name, Size = size, Position = pos, Color = color,
-            Material = Enum.Material.SmoothPlastic,
-            Anchored = false, CanCollide = false,
-            Parent = model,
-        })
+        return create("Part", { Name = name, Size = size, Position = pos, Color = color, Material = Enum.Material.SmoothPlastic, Anchored = false, CanCollide = false, Parent = model })
     end
-
     local skin = Color3.fromRGB(245, 205, 60)
-    local hrp = mk("HumanoidRootPart", Vector3.new(2, 2, 1), skin, Vector3.new(0, 3, 0))
-    hrp.Transparency = 1
+    local hrp = mk("HumanoidRootPart", Vector3.new(2, 2, 1), skin, Vector3.new(0, 3, 0)); hrp.Transparency = 1
     local torso = mk("Torso", Vector3.new(2, 2, 1), Color3.fromRGB(0, 92, 175), Vector3.new(0, 3, 0))
     local head = mk("Head", Vector3.new(2, 1, 1), skin, Vector3.new(0, 4.5, 0))
     create("SpecialMesh", { MeshType = Enum.MeshType.Head, Scale = Vector3.new(1.25, 1.25, 1.25), Parent = head })
@@ -869,305 +1042,183 @@ local function build_preview_rig(viewport)
     local ra = mk("Right Arm", Vector3.new(1, 2, 1), skin, Vector3.new(1.5, 3, 0))
     local ll = mk("Left Leg", Vector3.new(1, 2, 1), Color3.fromRGB(75, 160, 85), Vector3.new(-0.5, 1, 0))
     local rl = mk("Right Leg", Vector3.new(1, 2, 1), Color3.fromRGB(75, 160, 85), Vector3.new(0.5, 1, 0))
-    local hair = create("Part", {
-        Name = "Hair", Size = Vector3.new(1.35, 0.5, 1.35), Position = Vector3.new(0, 5.2, 0),
-        Color = Color3.fromRGB(196, 92, 44), Material = Enum.Material.SmoothPlastic,
-        Anchored = false, CanCollide = false, Parent = model,
-    })
-
+    local hair = create("Part", { Name = "Hair", Size = Vector3.new(1.35, 0.5, 1.35), Position = Vector3.new(0, 5.2, 0), Color = Color3.fromRGB(196, 92, 44), Material = Enum.Material.SmoothPlastic, Anchored = false, CanCollide = false, Parent = model })
     local rot180 = CFrame.Angles(math.rad(-90), 0, math.rad(180))
     local rot90 = CFrame.Angles(0, math.rad(90), 0)
     local rot_m90 = CFrame.Angles(0, math.rad(-90), 0)
-
-    local function motor(name, p0, p1, c0, c1)
-        return create("Motor6D", { Name = name, Part0 = p0, Part1 = p1, C0 = c0, C1 = c1, Parent = p0 })
-    end
-
-    motor("RootJoint", hrp, torso, CFrame.new(0, 0, 0) * rot180, CFrame.new(0, 0, 0) * rot180)
+    local function motor(name, p0, p1, c0, c1) return create("Motor6D", { Name = name, Part0 = p0, Part1 = p1, C0 = c0, C1 = c1, Parent = p0 }) end
+    motor("RootJoint", hrp, torso, CFrame.new() * rot180, CFrame.new() * rot180)
     motor("Neck", torso, head, CFrame.new(0, 1, 0) * rot180, CFrame.new(0, -0.5, 0) * rot180)
     motor("Right Shoulder", torso, ra, CFrame.new(1, 0.5, 0) * rot90, CFrame.new(-0.5, 0.5, 0) * rot90)
     motor("Left Shoulder", torso, la, CFrame.new(-1, 0.5, 0) * rot_m90, CFrame.new(0.5, 0.5, 0) * rot_m90)
     motor("Right Hip", torso, rl, CFrame.new(1, -1, 0) * rot90, CFrame.new(0.5, 1, 0) * rot90)
     motor("Left Hip", torso, ll, CFrame.new(-1, -1, 0) * rot_m90, CFrame.new(-0.5, 1, 0) * rot_m90)
-
-    local humanoid = create("Humanoid", { Parent = model })
-    humanoid.HipHeight = 0
+    local humanoid = create("Humanoid", { Parent = model }); humanoid.HipHeight = 0
     local animator = create("Animator", { Parent = humanoid })
-
     model.PrimaryPart = hrp
-
     local cam = create("Camera", { FieldOfView = 40, Parent = viewport })
     cam.CFrame = CFrame.lookAt(Vector3.new(0, 3.4, -7.2), Vector3.new(0, 3, 0))
     viewport.CurrentCamera = cam
-
-    preview.rig = model
-    preview.animator = animator
-    preview.head = head
-    preview.hair = hair
-    preview.root = hrp
+    preview.rig = model; preview.animator = animator; preview.head = head; preview.hair = hair; preview.root = hrp
     return model
 end
-
 build_preview_rig(vpf)
-
 function preview_animation(id)
     if not preview.animator then return end
     local digits = tostring(id):match("%d+")
     if not digits then return end
     preview.last_id = digits
-
-    local anim = Instance.new("Animation")
-    anim.AnimationId = "rbxassetid://" .. digits
-    local ok, track = pcall(function()
-        return preview.animator:LoadAnimation(anim)
-    end)
-    if not ok or not track then
-        log("couldn't load animation %s", digits)
-        return
-    end
-
-    local old = preview.track
-    if old then pcall(function() old:Stop() end) end
-
+    local anim = Instance.new("Animation"); anim.AnimationId = "rbxassetid://" .. digits
+    local ok, track = pcall(function() return preview.animator:LoadAnimation(anim) end)
+    if not ok or not track then log("bad anim %s", digits) return end
+    if preview.track then pcall(function() preview.track:Stop() end) end
     track.Priority = Enum.AnimationPriority.Action
-    track.Looped = true
-    track:Play()
-    track:AdjustSpeed(preview.speed)
+    track.Looped = true; track:Play(); track:AdjustSpeed(preview.speed)
     preview.track = track
 end
-
-local function speed_text(x)
-    if x == 0.25 then return "0.25x" end
-    if x == 0.5 then return "0.5x" end
-    return "1.0x"
-end
-
+local function speed_text(x) return x == 0.25 and "0.25x" or x == 0.5 and "0.5x" or "1.0x" end
 function set_speed(x)
     preview.speed = x
     if speed_label then speed_label.Text = "Speed: " .. speed_text(x) end
     if preview.track then preview.track:AdjustSpeed(x) end
 end
-
-function replay_preview()
-    if preview.last_id then preview_animation(preview.last_id) end
-end
-
+function replay_preview() if preview.last_id then preview_animation(preview.last_id) end end
 speed_label = create("TextLabel", {
     Size = UDim2.fromOffset(110, 18), Position = UDim2.fromOffset(12, 254),
     BackgroundTransparency = 1, Text = "Speed: 1.0x",
     Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = col_left,
 })
-
-local speed_row = create("Frame", {
-    Size = UDim2.fromOffset(276, 20), Position = UDim2.fromOffset(12, 252),
-    BackgroundTransparency = 1, Parent = col_left,
-})
-
+local speed_row = create("Frame", { Size = UDim2.fromOffset(276, 20), Position = UDim2.fromOffset(12, 252), BackgroundTransparency = 1, Parent = col_left })
 local function right_btn(text, off, w, cb)
     local b = make_button(speed_row, text, w, 18, cb, { textsize = 9 })
-    b.AnchorPoint = Vector2.new(1, 0)
-    b.Position = UDim2.new(1, -off, 0, 1)
+    b.AnchorPoint = Vector2.new(1, 0); b.Position = UDim2.new(1, -off, 0, 1)
     return b
 end
-
 right_btn("▶", 0, 26, function() replay_preview() end)
 right_btn("1x", 30, 26, function() set_speed(1) end)
 right_btn("0.5x", 60, 30, function() set_speed(0.5) end)
 right_btn("0.25x", 94, 34, function() set_speed(0.25) end)
-
 time_label = create("TextLabel", {
     Size = UDim2.fromOffset(276, 16), Position = UDim2.fromOffset(12, 276),
     BackgroundTransparency = 1, Text = "0.00s / 0.00s",
     Font = font_mono, TextSize = 10, TextColor3 = theme.text_dim,
     TextXAlignment = Enum.TextXAlignment.Center, Parent = col_left,
 })
-
-local seek = create("Frame", {
-    Size = UDim2.fromOffset(276, 4), Position = UDim2.fromOffset(12, 298),
-    BackgroundColor3 = theme.track_off, Parent = col_left,
-})
+local seek = create("Frame", { Size = UDim2.fromOffset(276, 4), Position = UDim2.fromOffset(12, 298), BackgroundColor3 = theme.track_off, Parent = col_left })
 corner(seek, 2)
 seek_fill = create("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = theme.accent, Parent = seek })
 corner(seek_fill, 2)
-local seek_hit = create("TextButton", {
-    Size = UDim2.new(1, 0, 1, 12), Position = UDim2.new(0, 0, 0, -4),
-    BackgroundTransparency = 1, Text = "", Parent = seek,
-})
-
+local seek_hit = create("TextButton", { Size = UDim2.new(1, 0, 1, 12), Position = UDim2.new(0, 0, 0, -4), BackgroundTransparency = 1, Text = "", Parent = seek })
 local seeking = false
 local function seek_to(x)
-    local track = preview.track
-    if not track then return end
-    local alpha = math.clamp((x - seek.AbsolutePosition.X) / seek.AbsoluteSize.X, 0, 1)
-    track.TimePosition = alpha * track.Length
+    local t = preview.track; if not t then return end
+    local a = math.clamp((x - seek.AbsolutePosition.X) / math.max(seek.AbsoluteSize.X, 1), 0, 1)
+    t.TimePosition = a * t.Length
 end
 seek_hit.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        seeking = true
-        seek_to(input.Position.X)
-    end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then seeking = true; seek_to(input.Position.X) end
 end)
 UserInputService.InputChanged:Connect(function(input)
-    if seeking and input.UserInputType == Enum.UserInputType.MouseMovement then
-        seek_to(input.Position.X)
-    end
+    if seeking and input.UserInputType == Enum.UserInputType.MouseMovement then seek_to(input.Position.X) end
 end)
 UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        seeking = false
-    end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then seeking = false end
 end)
-
 local set_delay_btn = make_button(col_left, "Set Parry Delay from Playhead", 276, 24, function()
-    local track = preview.track
-    if track and parry_delay_box then
-        parry_delay_box.Text = string.format("%.2f", track.TimePosition)
-    end
+    local t = preview.track
+    if t and parry_delay_box then parry_delay_box.Text = string.format("%.2f", t.TimePosition) end
 end, { textsize = 10 })
 set_delay_btn.Position = UDim2.fromOffset(12, 374)
-
--- middle column
-function nearest_player()
-    local my_root = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
-    if not my_root then return nil end
-    local best, best_d = nil, math.huge
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= lp and p.Character then
-            local r = p.Character:FindFirstChild("HumanoidRootPart")
-            if r then
-                local d = (r.Position - my_root.Position).Magnitude
-                if d < best_d then best, best_d = p, d end
-            end
-        end
-    end
-    return best
-end
-
-function refresh_row_visibility()
-    local target = tgt_all and nil or nearest_player()
-    for _, entry in ipairs(detected_rows) do
-        entry.frame.Visible = tgt_all or (entry.player == target)
-    end
-end
-
 create("TextLabel", {
     Size = UDim2.fromOffset(160, 20), Position = UDim2.fromOffset(12, 12),
     BackgroundTransparency = 1, Text = "Detected Animations",
     Font = font_med, TextSize = 11, TextColor3 = theme.text,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = col_mid,
 })
-
-local tgt_btn
-tgt_btn = make_button(col_mid, "TGT: ALL", 76, 20, function()
+local tgt_btn = make_button(col_mid, "TGT: ALL", 76, 20, function()
     tgt_all = not tgt_all
-    tgt_btn.Text = tgt_all and "TGT: ALL" or "TGT: TARGET"
+    tgt_btn.Text = tgt_all and "TGT: ALL" or "TGT: NEAREST"
     refresh_row_visibility()
 end, { textsize = 9 })
-tgt_btn.AnchorPoint = Vector2.new(1, 0)
-tgt_btn.Position = UDim2.new(1, -12, 0, 12)
-
+tgt_btn.AnchorPoint = Vector2.new(1, 0); tgt_btn.Position = UDim2.new(1, -12, 0, 12)
 anim_list = create("ScrollingFrame", {
-    Size = UDim2.new(1, -24, 1, -52),
-    Position = UDim2.fromOffset(12, 40),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 3,
-    ScrollBarImageColor3 = Color3.fromRGB(70, 70, 80),
+    Size = UDim2.new(1, -24, 1, -52), Position = UDim2.fromOffset(12, 40),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 3, ScrollBarImageColor3 = Color3.fromRGB(70, 70, 80),
     ScrollBarImageTransparency = 0.3,
     AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    CanvasSize = UDim2.new(0, 0, 0, 0),
-    Parent = col_mid,
+    CanvasSize = UDim2.new(0, 0, 0, 0), Parent = col_mid,
 })
 vlist(anim_list, 4)
-
+function refresh_row_visibility()
+    local target
+    local my_root = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    if not tgt_all and my_root then
+        local best, bd = nil, math.huge
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= lp and p.Character then
+                local r = p.Character:FindFirstChild("HumanoidRootPart")
+                if r then local d = (r.Position - my_root.Position).Magnitude; if d < bd then best, bd = p, d end end
+            end
+        end
+        target = best
+    end
+    for _, e in ipairs(detected_rows) do e.frame.Visible = tgt_all or (e.player == target) end
+end
 function add_detected_row(player_obj, anim)
     local key = player_obj.Name .. "|" .. anim.AnimationId
     if detected_seen[key] then return end
     detected_seen[key] = true
-
     if #detected_rows >= 120 then
         local first = table.remove(detected_rows, 1)
         if first then first.frame:Destroy() end
     end
-
     local row = create("TextButton", {
-        Size = UDim2.new(1, 0, 0, 22),
-        BackgroundColor3 = theme.panel_alt,
-        Text = "", AutoButtonColor = false,
-        LayoutOrder = next_order(),
-        Parent = anim_list,
+        Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = theme.panel_alt,
+        Text = "", AutoButtonColor = false, LayoutOrder = next_order(), Parent = anim_list,
     })
     corner(row, 4)
     local row_stroke = add_stroke(row, theme.stroke_soft)
-
-    local name = anim.Name
-    if name == nil or name == "" then name = "animation" end
-
+    local name = anim.Name; if name == nil or name == "" then name = "animation" end
     create("TextLabel", {
-        Position = UDim2.new(0, 8, 0, 0),
-        Size = UDim2.new(1, -34, 1, 0),
-        BackgroundTransparency = 1,
-        RichText = true,
+        Position = UDim2.new(0, 8, 0, 0), Size = UDim2.new(1, -34, 1, 0),
+        BackgroundTransparency = 1, RichText = true,
         Text = string.format('<font color="#7c7c86">[%s]</font> %s', player_obj.Name, name),
         Font = font_ui, TextSize = 11, TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = row,
+        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = row,
     })
-
     local kill = create("TextButton", {
-        Size = UDim2.fromOffset(18, 18),
-        Position = UDim2.new(1, -21, 0.5, -9),
-        BackgroundTransparency = 1, Text = "✕",
-        Font = font_ui, TextSize = 10, TextColor3 = theme.text_faint,
-        AutoButtonColor = false, Parent = row,
+        Size = UDim2.fromOffset(18, 18), Position = UDim2.new(1, -21, 0.5, -9),
+        BackgroundTransparency = 1, Text = "✕", Font = font_ui, TextSize = 10,
+        TextColor3 = theme.text_faint, AutoButtonColor = false, Parent = row,
     })
     kill.MouseEnter:Connect(function() kill.TextColor3 = theme.accent end)
     kill.MouseLeave:Connect(function() kill.TextColor3 = theme.text_faint end)
-
     local entry = { frame = row, player = player_obj, stroke = row_stroke, anim = anim }
-
     kill.MouseButton1Click:Connect(function()
         detected_seen[key] = nil
-        for i, e in ipairs(detected_rows) do
-            if e.frame == row then
-                table.remove(detected_rows, i)
-                break
-            end
-        end
+        for i, e in ipairs(detected_rows) do if e.frame == row then table.remove(detected_rows, i) break end end
         row:Destroy()
     end)
-
     row.MouseButton1Click:Connect(function()
         local digits = anim.AnimationId:match("%d+")
-        if digits and anim_id_box then
-            anim_id_box.Text = digits
-            preview.last_id = digits
-        end
+        if digits and anim_id_box then anim_id_box.Text = digits; preview.last_id = digits end
         for _, e in ipairs(detected_rows) do
             e.stroke.Color = (e.frame == row) and theme.accent or theme.stroke_soft
         end
     end)
-
     table.insert(detected_rows, entry)
     refresh_row_visibility()
 end
-
--- right column
 create("TextLabel", {
     Size = UDim2.fromOffset(200, 20), Position = UDim2.fromOffset(12, 12),
     BackgroundTransparency = 1, Text = "Parry Configuration",
     Font = font_med, TextSize = 11, TextColor3 = theme.text,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = col_right,
 })
-
-local cfg_wrap = create("Frame", {
-    Size = UDim2.new(1, -24, 1, -40), Position = UDim2.fromOffset(12, 40),
-    BackgroundTransparency = 1, Parent = col_right,
-})
+local cfg_wrap = create("Frame", { Size = UDim2.new(1, -24, 1, -40), Position = UDim2.fromOffset(12, 40), BackgroundTransparency = 1, Parent = col_right })
 vlist(cfg_wrap, 4)
-
 anim_id_box = input_row(cfg_wrap, "Animation ID", "Ex: 123456789", "")
 parry_delay_box = input_row(cfg_wrap, "Parry Delay (s)", "Ex: 0.15", "")
 input_row(cfg_wrap, "Window Duration (s)", "Default: 0.2", "")
@@ -1177,15 +1228,9 @@ input_row(cfg_wrap, "Label (optional)", "Ex: Gojo Blue", "")
 mini_toggle_row(cfg_wrap, "Force Checks (bypass facing)", false)
 mini_toggle_row(cfg_wrap, "Auto Punch (M1 after)", false)
 mini_toggle_row(cfg_wrap, "Instant Lock (face target)", false)
-
 status_bar(parry_window)
-
---=============================================================
--- animation detection hooks
---=============================================================
 local function hook_character(p)
-    local char = p.Character
-    if not char then return end
+    local char = p.Character; if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
     if not hum then return end
     local animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 3)
@@ -1194,46 +1239,29 @@ local function hook_character(p)
     hooked_animators[animator] = true
     animator.AnimationPlayed:Connect(function(track)
         local ok, anim = pcall(function() return track.Animation end)
-        if ok and anim then
-            add_detected_row(p, anim)
-        end
+        if ok and anim then add_detected_row(p, anim) end
     end)
 end
-
 local function watch_player(p)
     if p == lp then return end
     task.spawn(hook_character, p)
-    p.CharacterAdded:Connect(function()
-        task.spawn(hook_character, p)
-    end)
+    p.CharacterAdded:Connect(function() task.spawn(hook_character, p) end)
 end
-
-for _, p in ipairs(Players:GetPlayers()) do
-    watch_player(p)
-end
+for _, p in ipairs(Players:GetPlayers()) do watch_player(p) end
 Players.PlayerAdded:Connect(watch_player)
-
---=============================================================
--- frame loop
---=============================================================
 local spin_t = 0
-
 RunService.RenderStepped:Connect(function(dt)
     if not parry_window.Visible then return end
     if not preview.rig then return end
-
     spin_t += dt
     preview.rig:PivotTo(CFrame.new(0, 3, 0) * CFrame.Angles(0, spin_t * 0.5, 0))
-    if preview.hair and preview.head then
-        preview.hair.CFrame = preview.head.CFrame * CFrame.new(0, 0.58, 0)
-    end
-
-    local track = preview.track
-    if track then
-        local length = math.max(track.Length, 0.001)
-        local pos = math.clamp(track.TimePosition, 0, length)
-        time_label.Text = string.format("%.2fs / %.2fs", pos, track.Length)
-        seek_fill.Size = UDim2.new(pos / length, 0, 1, 0)
+    if preview.hair and preview.head then preview.hair.CFrame = preview.head.CFrame * CFrame.new(0, 0.58, 0) end
+    local t = preview.track
+    if t then
+        local len = math.max(t.Length, 0.001)
+        local pos = math.clamp(t.TimePosition, 0, len)
+        time_label.Text = string.format("%.2fs / %.2fs", pos, t.Length)
+        seek_fill.Size = UDim2.new(pos / len, 0, 1, 0)
     else
         time_label.Text = "0.00s / 0.00s"
         seek_fill.Size = UDim2.new(0, 0, 1, 0)
@@ -1241,325 +1269,411 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 --=============================================================
--- right panel bits
+-- right panel
 --=============================================================
 local function panel_header(text)
     create("TextLabel", {
-        Size = UDim2.new(1, 0, 0, 16),
-        BackgroundTransparency = 1, Text = text,
+        Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = text,
         Font = font_med, TextSize = 10, TextColor3 = theme.text,
         TextXAlignment = Enum.TextXAlignment.Left,
         LayoutOrder = next_order(), Parent = rpanel,
     })
 end
-
 panel_header("Configs")
-
-local grid = create("Frame", {
-    Size = UDim2.new(1, 0, 0, 46),
-    BackgroundTransparency = 1,
-    LayoutOrder = next_order(),
-    Parent = rpanel,
-})
-create("UIGridLayout", {
-    CellSize = UDim2.fromOffset(38, 20),
-    CellPadding = UDim2.fromOffset(4, 4),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-    Parent = grid,
-})
-
-local cfg_names = { "Save", "Load", "Delete", "Copy", "Paste", "Reset", "Folder", "Reload" }
-for i, name in ipairs(cfg_names) do
-    make_button(grid, name, 38, 20, function()
-        log("config: %s", name:lower())
-    end, { textsize = 9, layout_order = i })
+local grid = create("Frame", { Size = UDim2.new(1, 0, 0, 46), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = rpanel })
+create("UIGridLayout", { CellSize = UDim2.fromOffset(38, 20), CellPadding = UDim2.fromOffset(4, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+for i, name in ipairs({ "Save", "Load", "Delete", "Copy", "Paste", "Reset", "Folder", "Reload" }) do
+    make_button(grid, name, 38, 20, function() log("config %s", name:lower()) end, { textsize = 9, layout_order = i })
 end
-
 panel_header("HUD")
 mini_toggle_row(rpanel, "Watermark", true)
 mini_toggle_row(rpanel, "Keybinds", false)
 mini_toggle_row(rpanel, "Notifications", true)
-
 panel_header("Config")
 mini_toggle_row(rpanel, "Config Is External", false)
-
 local dd = create("TextButton", {
-    Size = UDim2.new(1, 0, 0, 22),
-    BackgroundColor3 = theme.input,
-    Text = "  Default",
-    Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    AutoButtonColor = false,
-    LayoutOrder = next_order(),
-    Parent = rpanel,
+    Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = theme.input,
+    Text = "  Default", Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
+    TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false,
+    LayoutOrder = next_order(), Parent = rpanel,
 })
-corner(dd, 4)
-add_stroke(dd, theme.stroke)
-create("TextLabel", {
-    Size = UDim2.fromOffset(14, 22), Position = UDim2.new(1, -16, 0, 0),
-    BackgroundTransparency = 1, Text = "⌄",
-    Font = font_ui, TextSize = 10, TextColor3 = theme.text_faint, Parent = dd,
-})
+corner(dd, 4); add_stroke(dd, theme.stroke)
+create("TextLabel", { Size = UDim2.fromOffset(14, 22), Position = UDim2.new(1, -16, 0, 0), BackgroundTransparency = 1, Text = "⌄", Font = font_ui, TextSize = 10, TextColor3 = theme.text_faint, Parent = dd })
 local dd_options = { "Default", "External", "Custom 1" }
 local dd_index = 1
-dd.MouseButton1Click:Connect(function()
-    dd_index = dd_index % #dd_options + 1
-    dd.Text = "  " .. dd_options[dd_index]
+dd.MouseButton1Click:Connect(function() dd_index = dd_index % #dd_options + 1; dd.Text = "  " .. dd_options[dd_index] end)
+
+--=============================================================
+-- pages
+--=============================================================
+
+-- Combat > General
+local p_cg = new_page("combat_general")
+local s_ms = section(p_cg, "MAIN SETTINGS")
+check_row(s_ms, "Auto Parry", "Master toggle for the auto parry system.", true, function(v) log("auto parry %s", tostring(v)) end)
+check_row(s_ms, "Auto Parry Notify", "Notifies you when auto parry is on or off.", true, function(v) log("parry notify %s", tostring(v)) end)
+check_row(s_ms, "Face Target", "Automatically faces the opponent key for successful parries.", true, function(v) log("face target %s", tostring(v)) end)
+check_row(s_ms, "Aim Check", "Only parries when the attack is actually aimed at you. Uses the game's own hitbox geometry.", true, function(v) log("aim check %s", tostring(v)) end)
+check_row(s_ms, "Validation Retry", "Repeatedly retry parry validation if it fails required conditions within the parry window.", true, function(v) log("validation retry %s", tostring(v)) end)
+check_row(s_ms, "Block M1 During Parry Delay", "Prevents sending the M1 attack event while waiting to execute an auto parry.", true, function(v) log("block m1 %s", tostring(v)) end)
+check_row(s_ms, "Disable When Unfocused", "Disables auto parrying when the Roblox window is not focused.", true, function(v) log("disable unfocused %s", tostring(v)) end)
+check_row(s_ms, "Disable During Dashing", "Prevents auto parrying if your character is dashing.", false, function(v) log("disable dashing %s", tostring(v)) end)
+check_row(s_ms, "Auto Parry Dash", "Automatically blocks when enemy dashes at you.", true, function(v) log("parry dash %s", tostring(v)) end)
+check_row(s_ms, "Assist Position", "Micro-adjusts position to maintain optimal parry range.", false, function(v) log("assist pos %s", tostring(v)) end)
+check_row(s_ms, "Animation Logger", "Prints animation IDs to console (F9) to help you find new attack IDs.", false, function(v) log("anim log %s", tostring(v)) end)
+check_row(s_ms, "Unlock More Emotes Slot", "Unlocks the second emote page and UI.", false, function(v) log("emotes %s", tostring(v)) end)
+local s_pm = section(p_cg, "PARRY MECHANICS")
+make_slider(s_pm, "Response Delay (s)", "Artificial latency added to the parry response. 0 = react as early as possible.", 0, 1, 0, 0.01, function(v) log("res delay %s", fmt_num(v)) end)
+make_slider(s_pm, "Parry Duration (s)", "Duration to hold the block state active.", 0, 2, 0.35, 0.01, function(v) log("parry dur %s", fmt_num(v)) end)
+make_slider(s_pm, "Hold After Attack (s)", "Keeps the block up briefly after the last attack ends. Stops an enemy who steps in and out while chaining M1s from landing one in the gap. 0 disables it.", 0, 2, 0.22, 0.01, function(v) log("hold after %s", fmt_num(v)) end)
+make_slider(s_pm, "Detection Range", "Max distance to validate an incoming attack.", 1, 50, 11.1, 0.1, function(v) log("det range %s", fmt_num(v)) end)
+make_slider(s_pm, "Auto Parry M1s Range", "How far out an M1 gets parried. A closing-speed margin is added on top, so a dash-in still registers.", 1, 50, 9, 0.1, function(v) log("m1 range %s", fmt_num(v)) end)
+make_slider(s_pm, "Motion Prediction", "Compensates for enemy velocity lag.", 0, 1, 0.14, 0.01, function(v) log("motion pred %s", fmt_num(v)) end)
+make_slider(s_pm, "Success Rate", "Probability of attempting a parry (Legitimacy).", 0, 1, 1, 0.01, function(v) log("success %s", fmt_num(v)) end)
+make_slider(s_pm, "Face Duration", "Time to remain facing target after parry.", 0, 2, 0.5, 0.01, function(v) log("face dur %s", fmt_num(v)) end)
+make_slider(s_pm, "Pre-Face Delay", "Delay before turning to face the target.", 0, 1, 0.1, 0.01, function(v) log("preface %s", fmt_num(v)) end)
+
+-- Combat > Combat
+local p_cc = new_page("combat_combat")
+local s_off = section(p_cc, "OFFENSE")
+check_row(s_off, "Auto Punch", "Automatically attacks enemies.", true, function(v) log("auto punch %s", tostring(v)) end)
+check_row(s_off, "Auto Punch After Parry", "The instant a parry connects, strips the block and throws an M1.", true, function(v) log("punch after parry %s", tostring(v)) end)
+check_row(s_off, "Auto Dash Assist", "Dashes toward target and does M1 at keybind press.", true, function(v) log("auto dash %s", tostring(v)) end)
+check_row(s_off, "Auto Perfect Clap", "Perfectly times M1 after pressing R for Switcher.", true, function(v) log("perfect clap %s", tostring(v)) end)
+check_row(s_off, "Auto Black Flash", "Automatically triggers Black Flash on specific animation cues.", true, function(v) log("auto bf %s", tostring(v)) end)
+check_row(s_off, "Auto Black Flash Chain", "Dashes behind target before Black Flash.", true, function(v) log("bf chain %s", tostring(v)) end)
+check_row(s_off, "Auto Counter", "Automatically uses your character's Counter Skill (4, 3, 2, Q).", true, function(v) log("auto counter %s", tostring(v)) end)
+check_row(s_off, "Glide To Target", "Moves towards target.", true, function(v) log("glide %s", tostring(v)) end)
+check_row(s_off, "Human Combo", "Stops after 3 hits.", false, function(v) log("human combo %s", tostring(v)) end)
+check_row(s_off, "Auto Harada Dodges", "On M1 detection: presses M1+M2 simultaneously. Requires Lucky Coward (Unawakened Sukuna) equipped.", false, function(v) log("harada %s", tostring(v)) end)
+local s_bf = section(p_cc, "BLACK FLASH")
+make_slider(s_bf, "BF Timing Shift (s)", "Fine-tune charge timing if failing due to lag.", -0.5, 0.5, 0, 0.01, function(v) log("bf shift %s", fmt_num(v)) end)
+make_segmented(s_bf, { "Legit", "Blatant" }, 1, function(i, name) log("bf mode %s", name) end)
+make_slider(s_bf, "BF Chain Range (studs)", "How far the chain looks for a target. Blatant only. Past 17 the dash cannot circle around, so it just charges straight in.", 0, 25, 11.7, 0.1, function(v) log("bf range %s", fmt_num(v)) end)
+local s_hd = section(p_cc, "HARUTA DODGE")
+make_slider(s_hd, "Dodge Delay (s)", "Delay before triggering perfect dodge. (Recommended: -0.009)", -0.5, 0.5, -0.01, 0.001, function(v) log("harada delay %s", fmt_num(v)) end)
+local s_par = section(p_cc, "PARAMETERS")
+make_slider(s_par, "Attack Delay", "Speed between automatic punches (M1s).", 0, 1, 0.05, 0.01, function(v) log("atk delay %s", fmt_num(v)) end)
+make_slider(s_par, "Hold M1 Time", "Duration to hold the attack button.", 0, 1, 0.1, 0.01, function(v) log("hold m1 %s", fmt_num(v)) end)
+make_slider(s_par, "Attack Distance", "Distance required to begin Auto Punch.", 1, 25, 9, 0.5, function(v) log("atk dist %s", fmt_num(v)) end)
+make_slider(s_par, "Detection Dist", "Range for 'Look At Target' while idling.", 1, 50, 15, 0.5, function(v) log("det dist %s", fmt_num(v)) end)
+make_slider(s_par, "Attack Chance", "Accuracy/Efficiency check.", 0, 1, 1, 0.01, function(v) log("chance %s", fmt_num(v)) end)
+check_row(s_par, "Look At Target", "Face your target automatically.", true, function(v) log("look at %s", tostring(v)) end)
+make_slider(s_par, "Look Duration", "Facing time after an attack cycle.", 0, 2, 0.35, 0.01, function(v) log("look dur %s", fmt_num(v)) end)
+local s_def = section(p_cc, "DEFENSE")
+check_row(s_def, "Auto Block Skills", "Auto blocks specific skills (IDs, Counters if possible).", true, function(v) log("block skills %s", tostring(v)) end)
+check_row(s_def, "Nail Projectile Block", "Blocks nail projectiles.", false, function(v) log("nail block %s", tostring(v)) end)
+local s_thr = section(p_cc, "THRESHOLDS")
+make_slider(s_thr, "Auto Parry Skills Range", "How far out a skill gets parried. Skills reach further than M1s, so this is separate.", 1, 50, 15, 0.5, function(v) log("parry range %s", fmt_num(v)) end)
+make_slider(s_thr, "Extra Delay", "Additional wait time for specific moves.", 0, 1, 0, 0.01, function(v) log("extra delay %s", fmt_num(v)) end)
+make_slider(s_thr, "Extra Hold", "Extended block duration for moves with multi-hits.", 0, 2, 0, 0.01, function(v) log("extra hold %s", fmt_num(v)) end)
+make_slider(s_thr, "Nail Distance", "Specifically for fast projectiles (Nails).", 1, 100, 40, 1, function(v) log("nail dist %s", fmt_num(v)) end)
+
+-- Misc > Misc
+local p_mi = new_page("misc_misc")
+local s_mi = section(p_mi, "MISC")
+check_row(s_mi, "Side Dash (Dodge)", "Dodge sideways when attacking.", false, function(v) log("side dash %s", tostring(v)) end)
+check_row(s_mi, "Camera Lock", "Locks camera onto target.", false, function(v) log("cam lock %s", tostring(v)) end)
+check_row(s_mi, "Blatant Mode", "Removes smoothing.", false, function(v) log("blatant %s", tostring(v)) end)
+check_row(s_mi, "No Dash Cooldown", "Removes the cooldown between dashes.", false, function(v) log("no cd %s", tostring(v)) end)
+check_row(s_mi, "No Stun", "Counters stun speed reduction and ragdoll.", false, function(v) log("no stun %s", tostring(v)) end)
+local s_tw = section(p_mi, "TARGET WHITELIST")
+local ps_row = create("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_tw })
+create("TextLabel", { Size = UDim2.new(0, 90, 1, 0), BackgroundTransparency = 1, Text = "Player Select", Font = font_med, TextSize = 11, TextColor3 = theme.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = ps_row })
+local ps_dd = make_button(ps_row, "Select Player...", 140, 24, function() log("player select") end, { textsize = 10 })
+ps_dd.Position = UDim2.new(0, 96, 0, 3)
+local ps_sw = make_button(ps_row, "Search Whitelist", 110, 24, function() log("search") end, { textsize = 10 })
+ps_sw.AnchorPoint = Vector2.new(1, 0); ps_sw.Position = UDim2.new(1, 0, 0, 3)
+make_red_button(s_tw, "Whitelist All", function() log("whitelist all") end, { height = 30 })
+local clear_row = create("Frame", { Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_tw })
+create("TextLabel", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "Clear Whitelist", Font = font_med, TextSize = 11, TextColor3 = theme.accent, TextXAlignment = Enum.TextXAlignment.Right, Parent = clear_row })
+local clear_btn = create("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = clear_row })
+clear_btn.MouseButton1Click:Connect(function() log("clear wl") end)
+local refresh_row = create("Frame", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_tw })
+create("TextLabel", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "Refresh Player List", Font = font_med, TextSize = 11, TextColor3 = theme.accent, TextXAlignment = Enum.TextXAlignment.Center, Parent = refresh_row })
+local ref_btn = create("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", Parent = refresh_row })
+ref_btn.MouseButton1Click:Connect(function() log("refresh list") end)
+create("TextLabel", { Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = "Focus Target: None", Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_tw })
+
+-- Misc > Auto Moves
+local p_am = new_page("misc_automoves")
+local s_am = section(p_am, "AUTO MOVES")
+check_row(s_am, "Auto Dash", "Dashes whenever it's off cooldown.", false, function(v) log("auto dash %s", tostring(v)) end)
+check_row(s_am, "Auto Jump", "Jumps on a fixed interval.", false, function(v) log("auto jump %s", tostring(v)) end)
+check_row(s_am, "Bunny Hop", "Repeated jumps while moving.", false, function(v) log("bhop %s", tostring(v)) end)
+
+-- Misc > QTE
+local p_q = new_page("misc_qte")
+local s_q = section(p_q, "QTE")
+check_row(s_q, "Auto QTE (Clash)", "Automatically completes clashes.", false, function(v) log("auto qte %s", tostring(v)) end)
+check_row(s_q, "Auto Final Judgement", "Automatically handles Higuruma's Final Judgement.", false, function(v) log("auto fj %s", tostring(v)) end)
+check_row(s_q, "Auto Beam Minigame", "Automatically letter types from the Beam QTE minigame.", false, function(v) log("auto beam %s", tostring(v)) end)
+check_row(s_q, "Auto Ratio Nanami", "Auto activates Nanami's ratio technique.", false, function(v) log("auto ratio %s", tostring(v)) end)
+check_row(s_q, "Smart Visual Timing", "Uses visual circle size.", true, function(v) log("smart visual %s", tostring(v)) end)
+check_row(s_q, "Debug Prints", "Shows debug info in console.", false, function(v) log("debug %s", tostring(v)) end)
+local s_qt = section(p_q, "TIMING")
+make_slider(s_qt, "Ratio Offset (s)", "Adjust timing of Ratio moves.", -0.5, 0.5, 0.1, 0.01, function(v) log("ratio off %s", fmt_num(v)) end)
+make_slider(s_qt, "Final Judgement KPS", "Speed of typing (Keys Per Second).", 1, 30, 10, 1, function(v) log("fj kps %s", fmt_num(v)) end)
+
+-- Utility > Server List
+local p_sl = new_page("util_serverlist")
+create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = "Available Servers",
+    Font = font_med, TextSize = 11, TextColor3 = theme.text,
+    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = p_sl,
+})
+mini_toggle_row(p_sl, "Show Not Full Only", false)
+local s_sl = section(p_sl, "SERVER LIST")
+local th = create("Frame", { Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_sl })
+create("TextLabel", { Size = UDim2.new(0, 30, 1, 0), BackgroundTransparency = 1, Text = "ID", Font = font_med, TextSize = 10, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = th })
+create("TextLabel", { Size = UDim2.new(0, 200, 1, 0), Position = UDim2.new(0, 40, 0, 0), BackgroundTransparency = 1, Text = "Server", Font = font_med, TextSize = 10, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = th })
+create("TextLabel", { Size = UDim2.new(0, 100, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), BackgroundTransparency = 1, Text = "Players", Font = font_med, TextSize = 10, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = th })
+create("TextLabel", { Size = UDim2.new(0, 100, 1, 0), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, Text = "Ping", Font = font_med, TextSize = 10, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Right, Parent = th })
+for i = 1, 7 do
+    local row = create("Frame", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_sl })
+    create("TextLabel", { Size = UDim2.new(0, 30, 1, 0), BackgroundTransparency = 1, Text = tostring(i), Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
+    create("TextLabel", { Size = UDim2.new(0, 200, 1, 0), Position = UDim2.new(0, 40, 0, 0), BackgroundTransparency = 1, Text = "Normal Server", Font = font_ui, TextSize = 11, TextColor3 = theme.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
+    create("TextLabel", { Size = UDim2.new(0, 100, 1, 0), Position = UDim2.new(0.6, 0, 0, 0), BackgroundTransparency = 1, Text = "19 / 20", Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
+    create("TextLabel", { Size = UDim2.new(0, 100, 1, 0), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, Text = "Excellent", Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Right, Parent = row })
+end
+make_red_button(s_sl, "Join Selected Server", function() log("join") end, { height = 32 })
+make_red_button(s_sl, "Refresh Now", function() log("refresh") end, { height = 28, dim = true })
+local s_sr = section(p_sl, "AUTO REFRESH")
+check_row(s_sr, "Auto Refresh", "Automatically refresh the server list periodically.", false, function(v) log("auto refresh %s", tostring(v)) end)
+
+-- Utility > Parry
+local p_up = new_page("util_parry")
+local s_up = section(p_up, "AUTO PARRY BUILDER")
+make_red_button(s_up, "Open Parry Builder UI", function() parry_window.Visible = true end, { height = 34 })
+local s_pdb = section(p_up, "PARRY DATABASE")
+local pdb_row = create("Frame", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_pdb })
+create("TextLabel", { Size = UDim2.new(0, 120, 1, 0), BackgroundTransparency = 1, Text = "0 configs saved", Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = pdb_row })
+local reload_btn = make_button(pdb_row, "Reload", 66, 20, function() log("reload") end, { textsize = 9 })
+reload_btn.AnchorPoint = Vector2.new(1, 0); reload_btn.Position = UDim2.new(1, -72, 0, 0)
+local disable_btn = create("TextButton", {
+    Size = UDim2.fromOffset(70, 20), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0),
+    BackgroundTransparency = 1, Text = "Disable All", Font = font_med, TextSize = 10,
+    TextColor3 = theme.accent, AutoButtonColor = false, Parent = pdb_row,
+})
+disable_btn.MouseButton1Click:Connect(function() log("disable all") end)
+local empty_box = create("Frame", { Size = UDim2.new(1, 0, 0, 90), BackgroundColor3 = theme.input, LayoutOrder = next_order(), Parent = s_pdb })
+corner(empty_box, 5); add_stroke(empty_box, theme.stroke)
+create("TextLabel", { Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 0.5, -20), BackgroundTransparency = 1, Text = "No configs saved yet", Font = font_med, TextSize = 12, TextColor3 = theme.text, Parent = empty_box })
+create("TextLabel", { Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 0.5, 0), BackgroundTransparency = 1, Text = "Use the Builder to add parry data", Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim, Parent = empty_box })
+
+-- Utility > Macros
+local p_um = new_page("util_macros")
+local s_rec = section(p_um, "RECORDER")
+create("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, TextWrapped = true, Text = "Idle. Nothing recorded yet.", Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_rec })
+create("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, TextWrapped = true, Text = "Captures every key and mouse press with its exact timing. The hub's own automated inputs get recorded too, so turn the autos off if you want a clean macro.", Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_rec })
+make_red_button(s_rec, "Start Recording", function() log("start rec") end, { height = 30 })
+local save_row = create("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_rec })
+local name_box = create("TextBox", { Size = UDim2.new(1, -90, 1, 0), BackgroundColor3 = theme.input, PlaceholderText = "Macro name...", PlaceholderColor3 = theme.text_faint, Text = "", Font = font_ui, TextSize = 11, TextColor3 = theme.text, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, Parent = save_row })
+corner(name_box, 4); add_stroke(name_box, theme.stroke); pad(name_box, 0, 8, 0, 8)
+local save_btn = make_button(save_row, "Save", 80, 26, function() log("save macro") end, { textsize = 10 })
+save_btn.AnchorPoint = Vector2.new(1, 0); save_btn.Position = UDim2.new(1, 0, 0, 0)
+local s_sm = section(p_um, "SAVED MACROS")
+create("TextLabel", { Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, Text = "No macros saved yet.", Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_sm })
+make_red_button(s_sm, "Refresh List", function() log("refresh") end, { height = 30 })
+make_red_button(s_sm, "Stop Playback", function() log("stop") end, { height = 30 })
+
+--=============================================================
+-- Utility > Player & QoL  (NEW SECTIONS FROM SCREENSHOT)
+--=============================================================
+local p_uo = new_page("util_player")
+local s_uo_g = section(p_uo, "GENERAL")
+check_row(s_uo_g, "Fullbright", "Flattens the lighting so nothing hides in a shadow. Restores your settings when off.", false, function(v) log("fullbright %s", tostring(v)) end)
+check_row(s_uo_g, "FPS Boost", "Drops render quality and turns off the game's own gore, debris physics and shadows.", false, function(v) log("fps boost %s", tostring(v)) end)
+check_row(s_uo_g, "No Screen Shake", "Kills the camera shake on every hit. The game exposes it as a setting, so nothing is being bypassed.", false, function(v) log("no shake %s", tostring(v)) end)
+check_row(s_uo_g, "Cull Combat Effects", "Clears workspace Effects as it fills. This game throws hundreds of parts per fight.", false, function(v) log("cull fx %s", tostring(v)) end)
+check_row(s_uo_g, "Auto Rejoin", "Rejoins the same place if you get disconnected or kicked.", false, function(v) log("auto rejoin %s", tostring(v)) end)
+local s_uo_sc = section(p_uo, "STATE CLEANUP")
+check_row(s_uo_sc, "Allow Jump", "Strips the NoJump state that moves apply to lock your jump.", false, function(v) log("allow jump %s", tostring(v)) end)
+check_row(s_uo_sc, "Allow Dash", "Strips NoDash. The dash input is refused by your own client while that state exists.", false, function(v) log("allow dash %s", tostring(v)) end)
+check_row(s_uo_sc, "Allow Block", "Strips NoBlock. Being unable to guard is what most block-break moves are for.", false, function(v) log("allow block %s", tostring(v)) end)
+check_row(s_uo_sc, "Allow Sprint", "Strips NoSprint.", false, function(v) log("allow sprint %s", tostring(v)) end)
+check_row(s_uo_sc, "Allow Attack", "Strips NoM1.", false, function(v) log("allow attack %s", tostring(v)) end)
+
+--=============================================================
+-- Visuals > ESP  (FULL REBUILD PER SCREENSHOT)
+--=============================================================
+local p_ve = new_page("vis_esp")
+local s_ve_w = section(p_ve, "WALLHACK SETTINGS")
+check_row(s_ve_w, "Enable ESP", "Master switch for all wallhacks.", false, function(v) log("esp %s", tostring(v)) end)
+check_row(s_ve_w, "Players ESP", "Highlights enemy players through walls.", true, function(v) log("players esp %s", tostring(v)) end)
+check_row(s_ve_w, "Dummies / NPC ESP", "Highlights training dummies and NPCs.", false, function(v) log("dummies esp %s", tostring(v)) end)
+check_row(s_ve_w, "Item ESP", "Highlights dropped items in the workspace items folder.", false, function(v) log("item esp %s", tostring(v)) end)
+
+local s_ve_c = section(p_ve, "ESP COLOR")
+make_color_row(s_ve_c, "Player Highlight", Color3.fromRGB(255, 50, 50), function(col) log("player color %s", tostring(col)) end)
+make_color_row(s_ve_c, "Dummy Highlight", Color3.fromRGB(80, 220, 100), function(col) log("dummy color %s", tostring(col)) end)
+make_color_row(s_ve_c, "Item Highlight", Color3.fromRGB(255, 215, 60), function(col) log("item color %s", tostring(col)) end)
+
+local s_ve_d = section(p_ve, "DETECTION")
+make_slider(s_ve_d, "Max Distance", "Maximum distance to draw ESP.", 0, 2000, 1500, 50, function(v) log("max dist %s", fmt_num(v)) end)
+
+--=============================================================
+-- Settings > Interface
+--=============================================================
+local p_si = new_page("set_interface")
+local s_si = section(p_si, "INTERFACE SETTINGS")
+check_row(s_si, "Visible", "Master toggle for UI visibility.", true, function(v)
+    if not v then toggle_menu() end
 end)
+check_row(s_si, "Silent Mode", "Hides all notifications and console logs (Stealth).", false, function(v) log("silent %s", tostring(v)) end)
+make_setting_button_row(s_si, "Menu Toggle Bind", menu_keybind.Name, function() end)
+make_setting_button_row(s_si, "Command Bar Bind", cmd_keybind.Name, function() end)
+
+-- wire up the bind buttons by re-fetching them (they return the button object)
+-- (busy now, wire later)
+
+local s_tm = section(p_si, "THEME MANAGER")
+local theme_dd = create("TextButton", {
+    Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = theme.input,
+    Text = "  Current Theme:  Ruby",
+    Font = font_med, TextSize = 11, TextColor3 = theme.text,
+    TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false,
+    LayoutOrder = next_order(), Parent = s_tm,
+})
+corner(theme_dd, 4); add_stroke(theme_dd, theme.stroke)
+create("TextLabel", { Size = UDim2.fromOffset(20, 30), Position = UDim2.new(1, -24, 0, 0), BackgroundTransparency = 1, Text = "⌄", Font = font_ui, TextSize = 12, TextColor3 = theme.text_faint, Parent = theme_dd })
 
 --=============================================================
--- pages content
+-- Settings > Configuration
 --=============================================================
-local combat = new_page("combat_general")
-local sec = section(combat, "OFFENSE")
-toggle_row(sec, "Auto Punch", "Automatically attacks enemies.", true, function(v) log("auto punch: %s", tostring(v)) end)
-toggle_row(sec, "Auto Punch After Parry", "The instant a parry connects, strips the block and throws an M1. Reacts to the parry sound, so it fires on the exact frame the hit lands. With Auto Parry on, this repeats — the M1 swings only come from parries.", true, function(v) log("auto punch after parry: %s", tostring(v)) end)
-toggle_row(sec, "Auto Dash Assist", "Dashes toward target and does an M1 at exposed press.", true, function(v) log("auto dash assist: %s", tostring(v)) end)
-toggle_row(sec, "Auto Perfect Clap", "Perfectly timed M1 after pressing R for Side Dash.", true, function(v) log("auto perfect clap: %s", tostring(v)) end)
-toggle_row(sec, "Auto Black Flash", "Automatically triggers Black Flash on specific animation cues.", true, function(v) log("auto black flash: %s", tostring(v)) end)
-toggle_row(sec, "Auto Black Flash Chain", "Chains the defined combo before Black Flash.", true, function(v) log("auto black flash chain: %s", tostring(v)) end)
-toggle_row(sec, "Auto Counter", "Automatically uses your character's Counter Skill (4, 3, 2, Q).", true, function(v) log("auto counter: %s", tostring(v)) end)
-toggle_row(sec, "Glide To Target", "Moves toward target.", true, function(v) log("glide to target: %s", tostring(v)) end)
-toggle_row(sec, "Human Combo", "Stops after 3 hits.", false, function(v) log("human combo: %s", tostring(v)) end)
-toggle_row(sec, "Auto Harada Dodges", "On M1 detection, presses M1+M2 simultaneously. Requires Lucky Coward (Unawakened Sukuna).", false, function(v) log("auto harada dodges: %s", tostring(v)) end)
+local p_sc = new_page("set_config")
+local s_st = section(p_sc, "STATUS")
+make_status_row(s_st, "Current Config", "main", theme.accent)
+make_status_row(s_st, "Autoload Status", "Autoload: main", theme.accent)
+make_status_row(s_st, "System Status", "Safe / Functional", theme.accent)
+make_status_row(s_st, "Server Response", "Connected (84ms)", theme.accent)
 
-local cc = new_page("combat_config")
-local cs = section(cc, "COMBAT CONFIG")
-input_row(cs, "Combo Delay (s)", "Ex: 0.12", "0.12")
-input_row(cs, "Reach (studs)", "Ex: 14", "14")
-input_row(cs, "Prediction (studs)", "Ex: 0.8", "0.8")
+local s_cm = section(p_sc, "CONFIGURATION MANAGEMENT")
+create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, Text = "Saved Configurations",
+    Font = font_med, TextSize = 12, TextColor3 = theme.text,
+    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_cm,
+})
+create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, Text = "Select a configuration to manage",
+    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_cm,
+})
+local saved_dd = create("TextButton", {
+    Size = UDim2.new(0, 220, 0, 26), AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, 0, 0, -34), BackgroundColor3 = theme.input,
+    Text = "main", Font = font_ui, TextSize = 11, TextColor3 = theme.text,
+    TextXAlignment = Enum.TextXAlignment.Center, AutoButtonColor = false, Parent = s_cm,
+})
+corner(saved_dd, 4); add_stroke(saved_dd, theme.stroke)
+make_red_button(s_cm, "Load Config", function() log("load config") end, { height = 30 })
+make_red_button(s_cm, "Update Config", function() log("update config") end, { height = 30, dim = true })
 
-local mm = new_page("misc_macros")
-local ms = section(mm, "MACROS")
-toggle_row(ms, "Anti AFK", "Keeps the session alive.", false, function(v) log("anti afk: %s", tostring(v)) end)
-toggle_row(ms, "Auto Rejoin", "Rejoins on kick.", false, function(v) log("auto rejoin: %s", tostring(v)) end)
+local s_nc = section(p_sc, "CREATE NEW CONFIG")
+create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, Text = "New Config Name",
+    Font = font_med, TextSize = 12, TextColor3 = theme.text,
+    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_nc,
+})
+create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, Text = "Enter a display name for your new configuration",
+    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_nc,
+})
+local new_cfg_box = create("TextBox", {
+    Size = UDim2.new(0, 220, 0, 26), AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, 0, 0, -34), BackgroundColor3 = theme.input,
+    PlaceholderText = "Config Name...", PlaceholderColor3 = theme.text_faint,
+    Text = "", Font = font_ui, TextSize = 11, TextColor3 = theme.text,
+    TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, Parent = s_nc,
+})
+corner(new_cfg_box, 4); add_stroke(new_cfg_box, theme.stroke); pad(new_cfg_box, 0, 8, 0, 8)
+make_red_button(s_nc, "Create New Config", function() log("create config %s", new_cfg_box.Text) end, { height = 30 })
 
-local am = new_page("misc_automoves")
-local as_ = section(am, "AUTO MOVES")
-toggle_row(as_, "Auto Dash", "Dashes whenever it's off cooldown.", false, function(v) log("auto dash: %s", tostring(v)) end)
-toggle_row(as_, "Auto Jump", "Jumps on a fixed interval.", false, function(v) log("auto jump: %s", tostring(v)) end)
-toggle_row(as_, "Bunny Hop", "Repeated jumps while moving.", false, function(v) log("bunny hop: %s", tostring(v)) end)
+--=============================================================
+-- Settings > Info
+--=============================================================
+local p_inf = new_page("set_info")
+local s_sinfo = section(p_inf, "SCRIPT INFORMATION")
+make_status_row(s_sinfo, "Script", "SHO", theme.accent)
+make_status_row(s_sinfo, "Version", "v0.0.1", theme.accent)
+make_status_row(s_sinfo, "Author", "Lee", theme.accent)
+make_status_row(s_sinfo, "Game", "Jujutsu Shenanigans", theme.accent)
+make_status_row(s_sinfo, "Platform", "PC", theme.accent)
+make_status_row(s_sinfo, "Detection Status", "No Known Detections", theme.accent)
+make_status_row(s_sinfo, "Last Updated", "September 2025", theme.accent)
 
-local qte = new_page("misc_qte")
-local qs = section(qte, "QTE ASSIST")
-toggle_row(qs, "Auto QTE", "Hits the input the moment the prompt shows.", false, function(v) log("auto qte: %s", tostring(v)) end)
-toggle_row(qs, "Perfect Timing", "Attempts the perfect window.", false, function(v) log("perfect timing: %s", tostring(v)) end)
-input_row(qs, "QTE Delay (s)", "Ex: 0.05", "0.05")
-
-local sl = new_page("util_serverlist")
-local ss = section(sl, "SERVER LIST")
-local server_rows = {
-    { "Tokyo #12", "34ms", "8/12" },
-    { "Tokyo #07", "41ms", "6/12" },
-    { "Singapore #03", "58ms", "9/12" },
-    { "Hong Kong #21", "62ms", "4/12" },
-    { "US West #09", "148ms", "11/12" },
+local s_mo = section(p_inf, "MODULES OVERVIEW")
+local modules = {
+    { "Auto Parry",        "Blocks M1s and skills. The move database builds itself from the game at load, so an update cannot leave it blind. Aim Check drops attacks that are not pointed at you." },
+    { "Parry Builder",     "Handles per-parry config: delay, window, min and max distance, force checks, dodge-distant, counter-after. Includes an animation ID logger." },
+    { "Auto Punch",        "M1 chain with delay, hold, distance, chance and combo controls. Human Combo caps it at three. Punch-After-Parry turns it into a parry-only tool." },
+    { "Black Flash",       "Fires the re-press inside the impact window on Idatori and Mahito. The Chain dashes a true orbit into the target back. Blatant only." },
+    { "Auto Counter",      "Reads your counter move key off the game's own bar, so it never fires the wrong slot while you are in it." },
+    { "Haruta Dodge",      "Perfect-dodges incoming attacks on reaction." },
 }
-for _, d in ipairs(server_rows) do
+for _, mod in ipairs(modules) do
     local row = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 20),
-        BackgroundTransparency = 1,
-        LayoutOrder = next_order(),
-        Parent = ss,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_mo,
     })
     create("TextLabel", {
-        Size = UDim2.new(0.5, 0, 1, 0), BackgroundTransparency = 1, Text = d[1],
-        Font = font_ui, TextSize = 11, TextColor3 = theme.text,
+        Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, Text = mod[1],
+        Font = font_med, TextSize = 12, TextColor3 = theme.accent,
         TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
     })
     create("TextLabel", {
-        Size = UDim2.new(0.25, 0, 1, 0), Position = UDim2.new(0.5, 0, 0, 0),
-        BackgroundTransparency = 1, Text = d[2],
-        Font = font_mono, TextSize = 10, TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
-    })
-    create("TextLabel", {
-        Size = UDim2.new(0.25, 0, 1, 0), Position = UDim2.new(0.75, 0, 0, 0),
-        BackgroundTransparency = 1, Text = d[3],
-        Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Right, Parent = row,
+        Position = UDim2.new(0, 0, 0, 16),
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, Text = mod[2],
+        Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
+        TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top, Parent = row,
     })
 end
-make_button(ss, "Refresh", 70, 20, function() log("server list refreshed") end, { textsize = 10, layout_order = next_order() })
-
-local up = new_page("util_parry")
-local us = section(up, "AUTO PARRY BUILDER")
-create("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 0),
-    AutomaticSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    TextWrapped = true,
-    Text = "detects every animation players in range play, then builds a parry profile from any of them. open the builder to pick animations, preview them on the dummy, and tune the parry window.",
-    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    LayoutOrder = next_order(),
-    Parent = us,
-})
-make_button(us, "OPEN AUTO PARRY BUILDER", 190, 26, function()
-    parry_window.Visible = true
-end, { textsize = 10, layout_order = next_order(), bg = theme.accent, color = Color3.fromRGB(255, 255, 255), hover = Color3.fromRGB(215, 24, 50), stroke = theme.accent_dim })
-
-local um = new_page("util_macros")
-local ums = section(um, "MACROS")
-toggle_row(ums, "Auto Execute", "Runs the selected macro on spawn.", false, function(v) log("auto execute: %s", tostring(v)) end)
-toggle_row(ums, "Macro Recorder", "Records input and plays it back.", false, function(v) log("macro recorder: %s", tostring(v)) end)
-
-local uo = new_page("util_player")
-local uos = section(uo, "PLAYER & OOL")
-toggle_row(uos, "Click Teleport", "Teleport to the player you click.", false, function(v) log("click teleport: %s", tostring(v)) end)
-toggle_row(uos, "Infinite Jump", "Jump without touching the ground.", false, function(v) log("infinite jump: %s", tostring(v)) end)
-toggle_row(uos, "Fullbright", "Lights up the map.", false, function(v) log("fullbright: %s", tostring(v)) end)
-
-local ve = new_page("vis_esp")
-local vs = section(ve, "ESP")
-toggle_row(vs, "Player ESP", "Highlight every player.", false, function(v) log("player esp: %s", tostring(v)) end)
-toggle_row(vs, "Name Tags", "Show names above players.", false, function(v) log("name tags: %s", tostring(v)) end)
-toggle_row(vs, "Health Bars", "Bar under the name tag.", false, function(v) log("health bars: %s", tostring(v)) end)
-toggle_row(vs, "Distance", "Studs between you and the target.", false, function(v) log("distance: %s", tostring(v)) end)
-toggle_row(vs, "Box ESP", "Corner box around the character.", false, function(v) log("box esp: %s", tostring(v)) end)
-toggle_row(vs, "Tracers", "Line from the bottom of your screen.", false, function(v) log("tracers: %s", tostring(v)) end)
-
---=============================================================
--- settings > interface (with keybind picker)
---=============================================================
-local si = new_page("set_interface")
-local iss = section(si, "INTERFACE")
-toggle_row(iss, "Watermark", "jjs killer badge in the corner.", true, function(v) log("watermark: %s", tostring(v)) end)
-toggle_row(iss, "Keybind List", "Show active keybinds.", false, function(v) log("keybind list: %s", tostring(v)) end)
-toggle_row(iss, "Notifications", "Toast on toggle.", true, function(v) log("notifications: %s", tostring(v)) end)
-
-local kb_row = create("Frame", {
-    Size = UDim2.new(1, 0, 0, 42),
-    BackgroundTransparency = 1,
-    LayoutOrder = next_order(),
-    Parent = iss,
-})
-create("TextLabel", {
-    Size = UDim2.new(1, -130, 0, 15),
-    BackgroundTransparency = 1,
-    Text = "Menu Keybind",
-    Font = font_med,
-    TextSize = 12,
-    TextColor3 = theme.text,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = kb_row,
-})
-create("TextLabel", {
-    Position = UDim2.new(0, 0, 0, 16),
-    Size = UDim2.new(1, -130, 0, 14),
-    BackgroundTransparency = 1,
-    Text = "click the button, then press any key to bind.",
-    Font = font_ui,
-    TextSize = 11,
-    TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Parent = kb_row,
-})
-
-local kb_btn = make_button(kb_row, menu_keybind.Name, 120, 26, nil, { textsize = 10, color = theme.text })
-kb_btn.AnchorPoint = Vector2.new(1, 0)
-kb_btn.Position = UDim2.new(1, 0, 0, 8)
-
-kb_btn.MouseButton1Click:Connect(function()
-    if listening_for_key then
-        listening_for_key = false
-        kb_btn.Text = menu_keybind.Name
-        kb_btn.TextColor3 = theme.text
-        return
-    end
-    listening_for_key = true
-    kb_btn.Text = "press a key..."
-    kb_btn.TextColor3 = theme.accent
-end)
-
-local sc = new_page("set_config")
-local scs = section(sc, "CONFIGURATION")
-input_row(scs, "Config Name", "Ex: main", "main")
-make_button(scs, "SAVE CONFIG", 110, 22, function() log("saved") end, { layout_order = next_order() })
-make_button(scs, "LOAD CONFIG", 110, 22, function() log("loaded") end, { layout_order = next_order() })
-
-local inf = new_page("set_info")
-local ifs = section(inf, "INFO")
-create("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1,
-    Text = "JJS KILLER // v2.0.1 — menu skeleton",
-    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = ifs,
-})
-create("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1,
-    Text = "ui by nyx — built for He",
-    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = ifs,
-})
-create("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1,
-    Text = "target: jujutsu shenanigans",
-    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = ifs,
-})
 
 --=============================================================
 -- nav tree
 --=============================================================
-local groups = {
-    { title = "COMBAT", items = { { "General", "combat_general" }, { "Config", "combat_config" } } },
-    { title = "MISCELLANEOUS", items = { { "Macros", "misc_macros" }, { "Auto Moves", "misc_automoves" }, { "QTE Assist", "misc_qte" } } },
-    { title = "UTILITY", items = { { "Server List", "util_serverlist" }, { "Auto Parry Builder", "util_parry" }, { "Macros", "util_macros" }, { "Player & OoL", "util_player" } } },
-    { title = "VISUALS", items = { { "ESP", "vis_esp" } } },
-    { title = "SETTINGS", items = { { "Interface", "set_interface" }, { "Configuration", "set_config" }, { "Info", "set_info" } } },
-}
-
-for gi, group in ipairs(groups) do
-    if gi > 1 then nav_spacer(6) end
-    add_nav_group(group.title)
-    for _, item in ipairs(group.items) do
-        add_nav_item(item[1], item[2])
-    end
-end
+add_collapsible_group("COMBAT", { { "General", "combat_general" }, { "Combat", "combat_combat" } })
+nav_spacer(4)
+add_collapsible_group("MISCELLANEOUS", { { "Misc", "misc_misc" }, { "Auto Moves", "misc_automoves" }, { "QTE Assist", "misc_qte" } })
+nav_spacer(4)
+add_collapsible_group("UTILITY", { { "Server List", "util_serverlist" }, { "Auto Parry Builder", "util_parry" }, { "Macros", "util_macros" }, { "Player & QoL", "util_player" } })
+nav_spacer(4)
+add_collapsible_group("VISUALS", { { "ESP", "vis_esp" } })
+nav_spacer(4)
+add_collapsible_group("SETTINGS", { { "Interface", "set_interface" }, { "Configuration", "set_config" }, { "Info", "set_info" } })
 
 --=============================================================
--- toggle logic + keybind handler + boot
+-- toggle + keybind + boot
 --=============================================================
-local function toggle_menu()
+function toggle_menu()
     local show = not win.Visible
     win.Visible = show
-    if not show then
-        parry_window.Visible = false
-    end
+    if not show then parry_window.Visible = false end
     update_floating_state(show)
-    log(show and "menu shown" or "menu hidden")
+    log(show and "shown" or "hidden")
 end
-
 close.MouseButton1Click:Connect(toggle_menu)
-
+minimize.MouseButton1Click:Connect(toggle_menu)
 floating.MouseButton1Click:Connect(function()
     if fb_drag.moved then return end
     toggle_menu()
 end)
-
 UserInputService.InputBegan:Connect(function(input, processed)
-    -- keybind listener — takes priority, eats the input
     if listening_for_key then
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            if input.KeyCode ~= Enum.KeyCode.Escape then
-                menu_keybind = input.KeyCode
-                log("menu keybind -> %s", menu_keybind.Name)
-            end
-            listening_for_key = false
-            kb_btn.Text = menu_keybind.Name
-            kb_btn.TextColor3 = theme.text
+        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Escape then
+            menu_keybind = input.KeyCode
+            log("keybind -> %s", menu_keybind.Name)
         end
+        listening_for_key = false
         return
     end
-
     if processed then return end
-    if input.KeyCode == menu_keybind then
-        toggle_menu()
-    end
+    if input.KeyCode == menu_keybind then toggle_menu() end
 end)
 
 set_page("combat_general")
 update_floating_state(win.Visible)
-
 log("loaded — %s / floating button toggles the menu", menu_keybind.Name)
