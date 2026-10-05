@@ -1,909 +1,222 @@
---=============================================================
--- JJS KILLER // v0.7 — full functional build
--- built for He by Nyx
--- target: roblox / jujutsu shenanigans
--- jede Funktion verdrahtet. kein Platzhalter mehr.
---=============================================================
+-- JJS KILLER v0.8 by Nyx
+-- target: jujutsu shenanigans (roblox)
+-- ascii-only, table-driven ui, xpcall wrapper
 
-local Players          = game:GetService("Players")
-local TweenService     = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local RunService       = game:GetService("RunService")
-local CoreGui          = game:GetService("CoreGui")
-local Lighting         = game:GetService("Lighting")
-local HttpService      = game:GetService("HttpService")
-local TeleportService  = game:GetService("TeleportService")
+local ok_load, err_load = xpcall(function()
+
+local Players        = game:GetService("Players")
+local TweenService   = game:GetService("TweenService")
+local UIS            = game:GetService("UserInputService")
+local RunService     = game:GetService("RunService")
+local CoreGui        = game:GetService("CoreGui")
+local Lighting       = game:GetService("Lighting")
 
 local lp = Players.LocalPlayer
-local menu_keybind      = Enum.KeyCode.RightShift
-local listening_for_key = false
-local DISCORD_LINK = "https://discord.gg/jvHDKVKAnC"
+local MENU_KEY = Enum.KeyCode.RightShift
+local DISCORD  = "https://discord.gg/jvHDKVKAnC"
 
---=============================================================
--- VirtualInputManager — fallback bắt buộc
---=============================================================
+-- ========== VIM ==========
 local VIM
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 
-local function _mouse_pos()
-    local m = UserInputService:GetMouseLocation()
-    return math.floor(m.X), math.floor(m.Y)
-end
-
-local function _vim_mouse(button, is_down, hold)
-    if not VIM then return false end
-    local x, y = _mouse_pos()
-    -- button: 0 = left, 1 = right, 2 = middle (theo spec VIM)
-    local ok = pcall(function()
-        VIM:SendMouseButtonEvent(x, y, button, is_down, game, button + 1)
-    end)
-    if ok and hold and hold > 0 and is_down then
-        task.wait(hold)
-        pcall(function() VIM:SendMouseButtonEvent(x, y, button, false, game, button + 1) end)
-    end
-    return ok
-end
-
-local function _vim_key(keycode, is_down, hold)
-    if not VIM then return false end
-    local ok = pcall(function()
-        VIM:SendKeyEvent(is_down, keycode, false, game)
-    end)
-    if ok and hold and hold > 0 and is_down then
-        task.wait(hold)
-        pcall(function() VIM:SendKeyEvent(false, keycode, false, game) end)
-    end
-    return ok
-end
-
---=============================================================
--- theme
---=============================================================
-local theme = {
-    bg = Color3.fromRGB(11, 11, 14),
-    panel = Color3.fromRGB(16, 16, 20),
-    panel_alt = Color3.fromRGB(22, 22, 27),
-    hover = Color3.fromRGB(30, 30, 36),
-    sidebar = Color3.fromRGB(13, 13, 16),
-    content = Color3.fromRGB(15, 15, 18),
-    stroke = Color3.fromRGB(34, 34, 41),
-    stroke_soft = Color3.fromRGB(27, 27, 33),
-    text = Color3.fromRGB(233, 233, 238),
-    text_dim = Color3.fromRGB(124, 124, 134),
-    text_faint = Color3.fromRGB(82, 82, 92),
-    accent = Color3.fromRGB(255, 32, 62),
-    accent_hover = Color3.fromRGB(215, 24, 50),
-    accent_dim = Color3.fromRGB(150, 22, 40),
-    accent_soft = Color3.fromRGB(200, 30, 55),
-    green = Color3.fromRGB(66, 220, 122),
-    input = Color3.fromRGB(24, 24, 30),
-    track_off = Color3.fromRGB(44, 44, 52),
+-- ========== THEME ==========
+local T = {
+    bg       = Color3.fromRGB(11, 11, 14),
+    panel    = Color3.fromRGB(16, 16, 20),
+    panel2   = Color3.fromRGB(22, 22, 27),
+    hover    = Color3.fromRGB(30, 30, 36),
+    side     = Color3.fromRGB(13, 13, 16),
+    stroke   = Color3.fromRGB(34, 34, 41),
+    stroke_d = Color3.fromRGB(27, 27, 33),
+    text     = Color3.fromRGB(233, 233, 238),
+    dim      = Color3.fromRGB(124, 124, 134),
+    faint    = Color3.fromRGB(82, 82, 92),
+    accent   = Color3.fromRGB(255, 32, 62),
+    accent_h = Color3.fromRGB(215, 24, 50),
+    green    = Color3.fromRGB(66, 220, 122),
+    input    = Color3.fromRGB(24, 24, 30),
+    track    = Color3.fromRGB(44, 44, 52),
 }
-local font_ui = Enum.Font.Gotham
-local font_med = Enum.Font.GothamMedium
-local font_bold = Enum.Font.GothamBold
-local font_mono = Enum.Font.Code
+local FUI   = Enum.Font.Gotham
+local FMED  = Enum.Font.GothamMedium
+local FBOLD = Enum.Font.GothamBold
+local FMONO = Enum.Font.Code
 
---=============================================================
--- global config + feature flags
---=============================================================
-_G.JJS = _G.JJS or {}
-local JJS = _G.JJS
-JJS.__loaded = true
-JJS.__build  = "v0.7"
-
-JJS.CFG = {
-    -- parry
-    parry_delay         = 0.12,
-    parry_hold          = 0.10,
-    parry_extra_delay   = 0,
-    parry_extra_hold    = 0,
-    parry_range_skill   = 18,
-    parry_range_m1      = 11,
-    parry_success       = 1.0,
-    parry_hold_after    = 0,
-    parry_motion_pred   = 0.14,
-    -- face
-    face_target         = true,
-    face_duration       = 0.5,
-    pre_face_delay      = 0.1,
-    look_at_target      = true,
-    look_duration       = 0.35,
-    look_detect_dist    = 15,
-    -- m1
-    m1_interval         = 0.08,
-    m1_hold             = 0.06,
-    m1_outer_range      = 11.5,
-    m1_inner_range      = 9.0,
-    m1_chance           = 1.0,
-    human_combo         = false,
-    glide_target        = false,
-    punch_after_parry   = false,
-    -- black flash
-    bf_delay            = 0.08,
-    bf_shift            = 0,
-    bf_mode             = "legit",
-    bf_chain_range      = 11.7,
-    -- haruta
-    dodge_delay         = -0.009,
-    -- counter
-    counter_key         = Enum.KeyCode.Four,
-    -- dash
-    dash_key            = Enum.KeyCode.Q,
-    -- qte
-    qte_keys            = {Enum.KeyCode.A, Enum.KeyCode.D, Enum.KeyCode.W, Enum.KeyCode.S, Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.R, Enum.KeyCode.F},
-    qte_kps             = 10,
-    ratio_offset        = 0.1,
-    -- movement
-    auto_jump_interval  = 0.4,
-    bhop_interval       = 0.15,
-    -- esp
-    esp_player_color    = Color3.fromRGB(255, 50, 50),
-    esp_dummy_color     = Color3.fromRGB(80, 220, 100),
-    esp_item_color      = Color3.fromRGB(255, 215, 60),
-    esp_max_dist        = 500,
-    -- legit
-    jitter_min          = 0.018,
-    jitter_max          = 0.055,
-    max_inputs_sec      = 7,
-    skip_chance         = 0.03,
-    -- flags
-    disable_on_unfocus  = true,
-    disable_while_dash  = false,
-    block_m1_parry      = true,
+-- ========== STATE ==========
+local F = {
+    auto_parry = false, aim_check = true, face_target = true,
+    anim_logger = false, disable_unfocused = true, parry_dash = false,
+    auto_m1 = false, auto_bf = false, auto_bf_chain = false,
+    auto_counter = false, auto_dash_assist = false, auto_harada = false,
+    human_combo = false, glide_to = false, punch_after_parry = false,
+    auto_perfect_clap = false, auto_block_skills = false, nail_block = false,
+    camera_lock = false, blatant = false, no_dash_cd = false, no_stun = false,
+    side_dash = false, auto_dash = false, auto_jump = false, bunny_hop = false,
+    auto_qte = false, auto_fj = false, auto_beam = false, auto_ratio = false,
+    fullbright = false, fps_boost = false, no_shake = false, cull_fx = false,
+    auto_rejoin = false, unlock_emotes = false,
+    allow_jump = false, allow_dash = false, allow_block = false,
+    allow_sprint = false, allow_attack = false,
+    esp = false, esp_players = true, esp_dummies = false, esp_items = false,
+    silent = true, jitter_on = true, rate_limit = true, skip_on = true,
+    anti_afk = false,
+}
+local CFG = {
+    parry_delay = 0.12, parry_hold = 0.10, parry_extra_delay = 0,
+    parry_extra_hold = 0, parry_range_skill = 18, parry_range_m1 = 11,
+    parry_success = 1.0, parry_hold_after = 0, parry_motion = 0.14,
+    face_dur = 0.5, pre_face_delay = 0.1, look_at = true, look_dur = 0.35,
+    look_dist = 15, m1_interval = 0.08, m1_hold = 0.06,
+    m1_outer = 11.5, m1_inner = 9, m1_chance = 1.0,
+    bf_delay = 0.08, bf_shift = 0, bf_range = 11.7,
+    dodge_delay = -0.009, counter_key = Enum.KeyCode.Four,
+    dash_key = Enum.KeyCode.Q, qte_kps = 10, ratio_off = 0.1,
+    jump_int = 0.4, bhop_int = 0.15,
+    esp_player_c = Color3.fromRGB(255, 50, 50),
+    esp_dummy_c = Color3.fromRGB(80, 220, 100),
+    esp_item_c = Color3.fromRGB(255, 215, 60),
+    esp_max = 500,
+    jitter_min = 0.018, jitter_max = 0.055,
+    max_inputs = 7, skip_p = 0.03,
 }
 
-JJS.F = {
-    auto_parry     = false,
-    auto_parry_dash= false,
-    auto_parry_notify = true,
-    aim_check      = true,
-    validation_retry = true,
-    assist_pos     = false,
-    anim_logger    = false,
-    unlock_emotes  = false,
-    -- offense
-    auto_m1        = false,
-    auto_m1_after_parry = false,
-    auto_dash_assist = false,
-    auto_perfect_clap = false,
-    auto_bf        = false,
-    auto_bf_chain  = false,
-    auto_counter   = false,
-    side_dash      = false,
-    auto_harada    = false,
-    -- defense
-    auto_block_skills = false,
-    nail_block     = false,
-    -- misc
-    camera_lock    = false,
-    blatant_mode   = false,
-    no_dash_cd     = false,
-    no_stun        = false,
-    -- moves
-    auto_dash      = false,
-    auto_jump      = false,
-    bunny_hop      = false,
-    -- qte
-    auto_qte       = false,
-    auto_fj        = false,
-    auto_beam      = false,
-    auto_ratio     = false,
-    -- qol
-    fullbright     = false,
-    fps_boost      = false,
-    no_shake       = false,
-    cull_fx        = false,
-    auto_rejoin    = false,
-    allow_jump     = false,
-    allow_dash     = false,
-    allow_block    = false,
-    allow_sprint   = false,
-    allow_attack   = false,
-    -- esp
-    esp            = false,
-    esp_players    = true,
-    esp_dummies    = false,
-    esp_items      = false,
-    -- internet
-    silent_mode    = true,
-    input_jitter   = true,
-    rate_limit     = true,
-    random_skip    = true,
-    anti_afk       = false,
-    -- internal
-    parry_active   = false,
-}
-
-function JJS.set(name, v) if JJS.F[name] ~= nil then JJS.F[name] = v and true or false end end
-function JJS.get(name) return JJS.F[name] end
-function JJS.setcfg(name, v) if JJS.CFG[name] ~= nil then JJS.CFG[name] = v end end
-
---=============================================================
--- legit input layer
---=============================================================
-local input_window = {}
+-- ========== INPUT ==========
+local input_buf = {}
 local function rate_ok()
-    if not JJS.F.rate_limit then return true end
+    if not F.rate_limit then return true end
     local now = tick()
-    for i = #input_window, 1, -1 do
-        if now - input_window[i] > 1 then table.remove(input_window, i) end
+    for i = #input_buf, 1, -1 do
+        if now - input_buf[i] > 1 then table.remove(input_buf, i) end
     end
-    if #input_window >= JJS.CFG.max_inputs_sec then return false end
-    table.insert(input_window, now)
+    if #input_buf >= CFG.max_inputs then return false end
+    table.insert(input_buf, now)
     return true
 end
-local function jitter()
-    if not JJS.F.input_jitter then return 0 end
-    return JJS.CFG.jitter_min + math.random() * (JJS.CFG.jitter_max - JJS.CFG.jitter_min)
+local function jit()
+    if not F.jitter_on then return 0 end
+    return CFG.jitter_min + math.random() * (CFG.jitter_max - CFG.jitter_min)
 end
-local function skip_rng()
-    if not JJS.F.random_skip then return false end
-    return math.random() < JJS.CFG.skip_chance
+local function skipit()
+    if not F.skip_on then return false end
+    return math.random() < CFG.skip_p
 end
-local function focus_ok()
-    if not JJS.CFG.disable_on_unfocus then return true end
-    return UserInputService.WindowFocused
+local function focused()
+    if not F.disable_unfocused then return true end
+    local ok, val = pcall(function() return UIS.WindowFocused end)
+    if not ok then return true end
+    return val
 end
 
-function JJS.mouse(btn, hold)
-    if not rate_ok() or skip_rng() or not focus_ok() then return end
+local function vim_mouse(btn, hold)
+    if not VIM then return false end
+    local m = UIS:GetMouseLocation()
+    local ok = pcall(function()
+        VIM:SendMouseButtonEvent(m.X, m.Y, btn, true, game, btn + 1)
+        task.wait(hold)
+        VIM:SendMouseButtonEvent(m.X, m.Y, btn, false, game, btn + 1)
+    end)
+    return ok
+end
+local function vim_key(kc, hold)
+    if not VIM then return false end
+    local ok = pcall(function()
+        VIM:SendKeyEvent(true, kc, false, game)
+        task.wait(hold)
+        VIM:SendKeyEvent(false, kc, false, game)
+    end)
+    if ok then return true end
+    ok = pcall(function()
+        VIM:SendKeyEvent(true, kc, false)
+        task.wait(hold)
+        VIM:SendKeyEvent(false, kc, false)
+    end)
+    return ok
+end
+
+local function press_m1(hold)
+    if not rate_ok() or skipit() or not focused() then return end
     hold = hold or 0.05
-    local button = (btn == 1) and 0 or 1   -- VIM: 0 left, 1 right
-    local ok = _vim_mouse(button, true, hold)
-    if not ok then
-        if btn == 1 and type(mouse1press) == "function" then
-            pcall(function() mouse1press(); task.wait(hold); mouse1release() end)
-        elseif btn == 2 and type(mouse2press) == "function" then
-            pcall(function() mouse2press(); task.wait(hold); mouse2release() end)
-        end
+    if type(mouse1press) == "function" then
+        pcall(function() mouse1press(); task.wait(hold); mouse1release() end)
+        return
     end
+    vim_mouse(0, hold)
 end
-
-function JJS.key(keycode, hold)
-    if not rate_ok() or skip_rng() or not focus_ok() then return end
+local function press_m2(hold)
+    if not rate_ok() or skipit() or not focused() then return end
     hold = hold or 0.05
-    local ok = _vim_key(keycode, true, hold)
-    if not ok and type(keypress) == "function" then
-        pcall(function() keypress(keycode); task.wait(hold); keyrelease(keycode) end)
+    if type(mouse2press) == "function" then
+        pcall(function() mouse2press(); task.wait(hold); mouse2release() end)
+        return
     end
+    vim_mouse(1, hold)
+end
+local function press_key(kc, hold)
+    if not rate_ok() or skipit() or not focused() then return end
+    hold = hold or 0.05
+    if type(keypress) == "function" then
+        pcall(function() keypress(kc); task.wait(hold); keyrelease(kc) end)
+        return
+    end
+    vim_key(kc, hold)
 end
 
---=============================================================
--- UI helpers (giữ nguyên)
---=============================================================
-local function create(class, props)
+-- ========== HELPERS ==========
+local function mk(class, props)
     local inst = Instance.new(class)
-    local parent = nil
+    local par
     for k, v in pairs(props or {}) do
-        if k == "Parent" then parent = v else inst[k] = v end
+        if k == "Parent" then par = v else inst[k] = v end
     end
-    if parent then inst.Parent = parent end
+    if par then inst.Parent = par end
     return inst
 end
-local function corner(parent, radius) return create("UICorner", { CornerRadius = UDim.new(0, radius or 6), Parent = parent }) end
-local function add_stroke(parent, color, thickness, transparency)
-    return create("UIStroke", { Color = color or theme.stroke, Thickness = thickness or 1, Transparency = transparency or 0, Parent = parent })
+local function rnd(parent, r)
+    mk("UICorner", {CornerRadius = UDim.new(0, r or 6), Parent = parent})
+end
+local function str(parent, c, t, tr)
+    mk("UIStroke", {Color = c or T.stroke, Thickness = t or 1, Transparency = tr or 0, Parent = parent})
 end
 local function pad(parent, t, r, b, l)
-    return create("UIPadding", {
-        PaddingTop = UDim.new(0, t or 0), PaddingRight = UDim.new(0, r or t or 0),
-        PaddingBottom = UDim.new(0, b or t or 0), PaddingLeft = UDim.new(0, l or r or t or 0),
+    mk("UIPadding", {
+        PaddingTop = UDim.new(0, t or 0),
+        PaddingRight = UDim.new(0, r or t or 0),
+        PaddingBottom = UDim.new(0, b or t or 0),
+        PaddingLeft = UDim.new(0, l or r or t or 0),
         Parent = parent,
     })
 end
 local function vlist(parent, gap)
-    return create("UIListLayout", { Padding = UDim.new(0, gap or 0), SortOrder = Enum.SortOrder.LayoutOrder, Parent = parent })
+    mk("UIListLayout", {Padding = UDim.new(0, gap or 0), SortOrder = Enum.SortOrder.LayoutOrder, Parent = parent})
 end
-local order = 0
-local function next_order() order = order + 1 return order end
-local function fmt_num(v)
+local ORD = 0
+local function ord() ORD = ORD + 1 return ORD end
+local function fnum(v)
     v = tonumber(v) or 0
     if v == math.floor(v) then return tostring(math.floor(v)) end
-    local s = string.format("%.3f", v); return s:gsub("0+$", ""):gsub("%.$", "")
+    return (string.format("%.3f", v):gsub("0+$", ""):gsub("%.$", ""))
 end
-
-local function resolve_host()
-    local ok, res = pcall(function() if type(gethui) == "function" then return gethui() end end)
-    if ok and res then return res end
-    return CoreGui
-end
-local function make_screengui(name)
-    local gui = create("ScreenGui", {
-        Name = name, ResetOnSpawn = false, IgnoreGuiInset = true,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 100,
-    })
-    if type(syn) == "table" and syn.protect_gui then pcall(syn.protect_gui, gui) end
-    if type(protect_gui) == "function" then pcall(protect_gui, gui) end
-    local host = resolve_host()
-    local ok = pcall(function() gui.Parent = host end)
-    if not ok then ok = pcall(function() gui.Parent = CoreGui end) end
-    if not ok then gui.Parent = lp:WaitForChild("PlayerGui") end
-    return gui
-end
-local gui = make_screengui("jjs_killer")
-
---=============================================================
--- drag
---=============================================================
-local drag    = { active = false, frame = nil, start = nil, origin = nil }
-local fb_drag = { active = false, moved = false, btn = nil, start = nil, origin = nil }
-UserInputService.InputChanged:Connect(function(input)
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-    if drag.active and drag.frame then
-        local d = input.Position - drag.start
-        drag.frame.Position = UDim2.new(drag.origin.X.Scale, drag.origin.X.Offset + d.X, drag.origin.Y.Scale, drag.origin.Y.Offset + d.Y)
-    end
-    if fb_drag.active and fb_drag.btn then
-        local d = input.Position - fb_drag.start
-        if d.Magnitude > 3 then fb_drag.moved = true end
-        fb_drag.btn.Position = UDim2.new(fb_drag.origin.X.Scale, fb_drag.origin.X.Offset + d.X, fb_drag.origin.Y.Scale, fb_drag.origin.Y.Offset + d.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        drag.active = false; drag.frame = nil
-        fb_drag.active = false; fb_drag.btn = nil
-    end
-end)
-local function make_draggable(frame, handle)
-    handle = handle or frame
-    handle.InputBegan:Connect(function(input)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-        drag.active = true; drag.frame = frame; drag.start = input.Position; drag.origin = frame.Position
-    end)
-end
-
---=============================================================
--- UI components
---=============================================================
-local function make_check(parent, default_on, on_change)
-    local on = false
-    local box = create("TextButton", {
-        Size = UDim2.fromOffset(18,18), BackgroundColor3 = theme.input,
-        Text = "", AutoButtonColor = false, Parent = parent,
-    })
-    corner(box, 4)
-    local stroke = add_stroke(box, theme.stroke, 1.2)
-    local dot = create("Frame", {
-        Size = UDim2.fromOffset(8,8), AnchorPoint = Vector2.new(0.5,0.5),
-        Position = UDim2.new(0.5,0,0.5,0), BackgroundColor3 = Color3.fromRGB(255,255,255),
-        BackgroundTransparency = 1, Parent = box,
-    })
-    corner(dot, 4)
-    local api = { frame = box }
-    function api.set(v, s)
-        on = v and true or false
-        TweenService:Create(box, TweenInfo.new(0.1), { BackgroundColor3 = on and theme.accent or theme.input }):Play()
-        TweenService:Create(dot, TweenInfo.new(0.1), { BackgroundTransparency = on and 0 or 1 }):Play()
-        stroke.Color = on and theme.accent or theme.stroke
-        if not s and on_change then on_change(on) end
-    end
-    function api.get() return on end
-    box.MouseButton1Click:Connect(function() api.set(not on) end)
-    return api
-end
-
-local function make_switch(parent, default_on, on_change)
-    local on = false
-    local track = create("Frame", { Size = UDim2.fromOffset(28,14), BackgroundColor3 = theme.track_off, Parent = parent })
-    corner(track, 7)
-    local knob = create("Frame", {
-        Size = UDim2.fromOffset(10,10), AnchorPoint = Vector2.new(0,0.5),
-        Position = UDim2.new(0,2,0.5,0), BackgroundColor3 = Color3.fromRGB(240,240,245), Parent = track,
-    })
-    corner(knob, 5)
-    local hit = create("TextButton", { Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Text = "", Parent = track })
-    local api = { frame = track }
-    function api.set(v, s)
-        on = v and true or false
-        TweenService:Create(track, TweenInfo.new(0.14), { BackgroundColor3 = on and theme.accent or theme.track_off }):Play()
-        TweenService:Create(knob, TweenInfo.new(0.14), { Position = on and UDim2.new(1,-12,0.5,0) or UDim2.new(0,2,0.5,0) }):Play()
-        if not s and on_change then on_change(on) end
-    end
-    function api.get() return on end
-    hit.MouseButton1Click:Connect(function() api.set(not on) end)
-    return api
-end
-
-local function make_button(parent, text, w, h, cb, opts)
-    opts = opts or {}
-    local bg = opts.bg or theme.panel_alt
-    local b = create("TextButton", {
-        Size = UDim2.fromOffset(w, h or 22), BackgroundColor3 = bg, Text = text,
-        Font = font_med, TextSize = opts.textsize or 10, TextColor3 = opts.color or theme.text_dim,
-        AutoButtonColor = false, TextTruncate = Enum.TextTruncate.AtEnd,
-        LayoutOrder = opts.layout_order or 0, Parent = parent,
-    })
-    corner(b, 4); add_stroke(b, theme.stroke)
-    b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = opts.hover or theme.hover }):Play() end)
-    b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = bg }):Play() end)
-    if cb then b.MouseButton1Click:Connect(cb) end
-    return b
-end
-
-local function make_red_button(parent, text, cb, opts)
-    opts = opts or {}
-    local bg = opts.dim and theme.accent_soft or theme.accent
-    local b = create("TextButton", {
-        Size = UDim2.new(1,0,0, opts.height or 30), BackgroundColor3 = bg, Text = text,
-        Font = font_bold, TextSize = opts.textsize or 11, TextColor3 = Color3.fromRGB(255,255,255),
-        AutoButtonColor = false, LayoutOrder = opts.layout_order or next_order(), Parent = parent,
-    })
-    corner(b, 5)
-    b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = opts.dim and Color3.fromRGB(220,40,65) or theme.accent_hover }):Play() end)
-    b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.1), { BackgroundColor3 = bg }):Play() end)
-    if cb then b.MouseButton1Click:Connect(cb) end
-    return b
-end
-
-local function check_row(parent, title, desc, changed)
-    local row = create("Frame", {
-        Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent,
-    })
-    create("TextLabel", {
-        Size = UDim2.new(1,-34,0,14), BackgroundTransparency = 1,
-        Text = title, Font = font_med, TextSize = 12, TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
-    })
-    if desc then
-        create("TextLabel", {
-            Position = UDim2.new(0,0,0,16), Size = UDim2.new(1,-34,0,0),
-            AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
-            Text = desc, Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-            TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
-            TextYAlignment = Enum.TextYAlignment.Top, Parent = row,
-        })
-    end
-    local chk = make_check(row, false, changed)
-    chk.frame.Position = UDim2.new(1,-18,0,0)
-    return row
-end
-
-local function mini_toggle_row(parent, label_text, default, changed)
-    local row = create("Frame", {
-        Size = UDim2.new(1,0,0,18), BackgroundTransparency = 1,
-        LayoutOrder = next_order(), Parent = parent,
-    })
-    create("TextLabel", {
-        Size = UDim2.new(1,-40,1,0), BackgroundTransparency = 1,
-        Text = label_text, Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
-    })
-    local sw = make_switch(row, default, changed)
-    sw.frame.Position = UDim2.new(1, -28, 0.5, -7)
-    return sw
-end
-
-local function make_slider(parent, label, desc, min, max, default, step, on_change)
-    local row = create("Frame", {
-        Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent,
-    })
-    vlist(row, 4)
-    local header = create("Frame", { Size = UDim2.new(1,0,0,14), BackgroundTransparency = 1, LayoutOrder = 1, Parent = row })
-    create("TextLabel", {
-        Size = UDim2.new(1,-70,1,0), BackgroundTransparency = 1, Text = label,
-        Font = font_med, TextSize = 12, TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = header,
-    })
-    local value_lbl = create("TextLabel", {
-        Size = UDim2.fromOffset(70,14), Position = UDim2.new(1,-70,0,0), BackgroundTransparency = 1,
-        Text = fmt_num(default), Font = font_med, TextSize = 12, TextColor3 = theme.accent,
-        TextXAlignment = Enum.TextXAlignment.Right, Parent = header,
-    })
-    if desc then
-        create("TextLabel", {
-            Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1, Text = desc, Font = font_ui, TextSize = 11,
-            TextColor3 = theme.text_dim, TextWrapped = true,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-            LayoutOrder = 2, Parent = row,
-        })
-    end
-    local wrap = create("Frame", { Size = UDim2.new(1,0,0,14), BackgroundTransparency = 1, LayoutOrder = 3, Parent = row })
-    local bar = create("Frame", {
-        Size = UDim2.new(1,0,0,4), Position = UDim2.new(0,0,0.5,-2),
-        BackgroundColor3 = theme.track_off, Parent = wrap,
-    })
-    corner(bar, 2)
-    local pct = math.clamp((default - min) / (max - min), 0, 1)
-    local fill = create("Frame", { Size = UDim2.new(pct,0,1,0), BackgroundColor3 = theme.accent, Parent = bar })
-    corner(fill, 2)
-    local knob = create("Frame", {
-        Size = UDim2.fromOffset(12,12), AnchorPoint = Vector2.new(0.5,0.5),
-        Position = UDim2.new(pct,0,0.5,0), BackgroundColor3 = Color3.fromRGB(240,240,245), Parent = bar,
-    })
-    corner(knob, 6)
-    local hit = create("TextButton", { Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Text = "", Parent = wrap })
-    local current, dragging = default, false
-    local function apply(v, s)
-        current = math.clamp(v, min, max)
-        if step then current = math.floor(current / step + 0.5) * step end
-        current = math.clamp(current, min, max)
-        local p = (current - min) / (max - min)
-        fill.Size = UDim2.new(p,0,1,0)
-        knob.Position = UDim2.new(p,0,0.5,0)
-        value_lbl.Text = fmt_num(current)
-        if not s and on_change then on_change(current) end
-    end
-    hit.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true; apply(min + math.clamp((input.Position.X - wrap.AbsolutePosition.X) / math.max(wrap.AbsoluteSize.X,1), 0, 1) * (max - min)) end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            apply(min + math.clamp((input.Position.X - wrap.AbsolutePosition.X) / math.max(wrap.AbsoluteSize.X,1), 0, 1) * (max - min))
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-    end)
-    return { set = function(v,s) apply(v,s) end, get = function() return current end }
-end
-
-local function make_segmented(parent, options, default_idx, on_change)
-    local row = create("Frame", { Size = UDim2.new(1,0,0,24), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent })
-    local btns = {}
-    local active = default_idx or 1
-    local n = #options
-    for i, opt in ipairs(options) do
-        local b = create("TextButton", {
-            Size = UDim2.new(1/n,-4,1,0), Position = UDim2.new((i-1)/n,0,0,0),
-            BackgroundColor3 = (i == active) and theme.accent or theme.panel_alt,
-            Text = opt, Font = font_med, TextSize = 10,
-            TextColor3 = (i == active) and Color3.fromRGB(255,255,255) or theme.text_dim,
-            AutoButtonColor = false, Parent = row,
-        })
-        corner(b, 4); btns[i] = b
-    end
-    local function set(i, s)
-        active = i
-        for j, b in ipairs(btns) do
-            local is_a = j == i
-            b.BackgroundColor3 = is_a and theme.accent or theme.panel_alt
-            b.TextColor3 = is_a and Color3.fromRGB(255,255,255) or theme.text_dim
-        end
-        if not s and on_change then on_change(i, options[i]) end
-    end
-    for i, b in ipairs(btns) do b.MouseButton1Click:Connect(function() set(i) end) end
-    return { set = function(i,s) set(i,s) end, get = function() return active, options[active] end }
-end
-
-local function make_setting_button_row(parent, label, btn_text, on_click)
-    local row = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent })
-    create("TextLabel", {
-        Size = UDim2.new(1,-110,1,0), BackgroundTransparency = 1, Text = label,
-        Font = font_med, TextSize = 11, TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
-    })
-    local btn = create("TextButton", {
-        Size = UDim2.fromOffset(100,22), AnchorPoint = Vector2.new(1,0.5), Position = UDim2.new(1,0,0.5,0),
-        BackgroundColor3 = theme.input, Text = btn_text, Font = font_ui, TextSize = 10,
-        TextColor3 = theme.text, AutoButtonColor = false, Parent = row,
-    })
-    corner(btn, 4); add_stroke(btn, theme.stroke)
-    if on_click then btn.MouseButton1Click:Connect(on_click) end
-    return btn
-end
-
-local function make_status_row(parent, label, value, value_color)
-    local row = create("Frame", { Size = UDim2.new(1,0,0,22), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent })
-    create("TextLabel", {
-        Size = UDim2.new(0.5,0,1,0), BackgroundTransparency = 1, Text = label,
-        Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
-    })
-    local val = create("TextLabel", {
-        Size = UDim2.new(0.5,0,1,0), Position = UDim2.new(0.5,0,0,0), BackgroundTransparency = 1,
-        Text = value, Font = font_med, TextSize = 11, TextColor3 = value_color or theme.accent,
-        TextXAlignment = Enum.TextXAlignment.Right, Parent = row,
-    })
-    return val
-end
-
-local function make_color_row(parent, label, initial_color, on_change)
-    local row = create("Frame", { Size = UDim2.new(1,0,0,32), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent })
-    create("TextLabel", {
-        Size = UDim2.new(0,110,1,0), BackgroundTransparency = 1, Text = label,
-        Font = font_med, TextSize = 11, TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
-    })
-    local palette = {
-        Color3.fromRGB(255,50,50), Color3.fromRGB(255,145,60),
-        Color3.fromRGB(255,215,60), Color3.fromRGB(90,220,110),
-        Color3.fromRGB(60,155,240), Color3.fromRGB(160,105,240),
-        Color3.fromRGB(240,100,200), Color3.fromRGB(240,240,240),
-    }
-    local swatch_wrap = create("Frame", {
-        Size = UDim2.new(0,180,0,16), Position = UDim2.new(0,110,0.5,-8),
-        BackgroundTransparency = 1, Parent = row,
-    })
-    create("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0,4), Parent = swatch_wrap })
-    local cur = initial_color
-    local preview
-    for i, col in ipairs(palette) do
-        local sw = create("TextButton", {
-            Size = UDim2.fromOffset(14,14), BackgroundColor3 = col,
-            Text = "", AutoButtonColor = false, LayoutOrder = i, Parent = swatch_wrap,
-        })
-        corner(sw, 7); add_stroke(sw, theme.stroke, 1)
-        sw.MouseButton1Click:Connect(function() cur = col; if preview then preview.BackgroundColor3 = col end; if on_change then on_change(col) end end)
-    end
-    preview = create("TextButton", {
-        Size = UDim2.fromOffset(66,22), AnchorPoint = Vector2.new(1,0.5), Position = UDim2.new(1,0,0.5,0),
-        BackgroundColor3 = initial_color, Text = "", AutoButtonColor = false, Parent = row,
-    })
-    corner(preview, 4); add_stroke(preview, theme.stroke)
-    return { get = function() return cur end }
-end
-
-local function section(parent, title)
-    local wrap = create("Frame", {
-        Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = parent,
-    })
-    vlist(wrap, 8)
-    local header = create("TextButton", {
-        Size = UDim2.new(1,0,0,26), BackgroundColor3 = theme.panel_alt,
-        Text = "", AutoButtonColor = false, LayoutOrder = 1, Parent = wrap,
-    })
-    corner(header, 5); add_stroke(header, theme.stroke_soft)
-    create("Frame", { Size = UDim2.new(0,3,0,12), Position = UDim2.new(0,8,0.5,-6), BackgroundColor3 = theme.accent, Parent = header })
-    create("TextLabel", {
-        Position = UDim2.new(0,18,0,0), Size = UDim2.new(1,-42,1,0),
-        BackgroundTransparency = 1, Text = title, Font = font_med, TextSize = 11,
-        TextColor3 = theme.accent, TextXAlignment = Enum.TextXAlignment.Left, Parent = header,
-    })
-    local chev = create("TextLabel", {
-        Size = UDim2.fromOffset(24,26), Position = UDim2.new(1,-24,0,0), BackgroundTransparency = 1,
-        Text = "v", Font = font_ui, TextSize = 11, TextColor3 = theme.text_faint, Parent = header,
-    })
-    local body = create("Frame", {
-        Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1, LayoutOrder = 2, Parent = wrap,
-    })
-    vlist(body, 14)
-    local open = true
-    header.MouseButton1Click:Connect(function() open = not open; body.Visible = open; chev.Text = open and "v" or ">" end)
-    return body
-end
-
---=============================================================
--- floating toggle + main window
---=============================================================
-local floating = create("TextButton", {
-    Name = "floating_toggle", Size = UDim2.fromOffset(88,26),
-    Position = UDim2.fromOffset(20,20), BackgroundColor3 = theme.panel,
-    Text = "", AutoButtonColor = false, ZIndex = 5, Parent = gui,
-})
-corner(floating, 13)
-local fb_stroke = add_stroke(floating, theme.accent, 1.2)
-local fb_label = create("TextLabel", {
-    Size = UDim2.fromScale(1,1), BackgroundTransparency = 1,
-    Text = "JJS KILLER", Font = font_bold, TextSize = 10,
-    TextColor3 = theme.accent, Parent = floating,
-})
-local fb_dot = create("Frame", {
-    Size = UDim2.fromOffset(5,5), Position = UDim2.new(1,-13,0.5,-2.5),
-    BackgroundColor3 = theme.accent, Parent = floating,
-})
-corner(fb_dot, 3)
-floating.MouseEnter:Connect(function() TweenService:Create(floating, TweenInfo.new(0.12), { BackgroundColor3 = theme.hover }):Play() end)
-floating.MouseLeave:Connect(function() TweenService:Create(floating, TweenInfo.new(0.12), { BackgroundColor3 = theme.panel }):Play() end)
-floating.InputBegan:Connect(function(input)
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-    fb_drag.active = true; fb_drag.moved = false
-    fb_drag.btn = floating; fb_drag.start = input.Position; fb_drag.origin = floating.Position
-end)
-local function update_floating_state(show)
-    if show then
-        fb_stroke.Color = theme.stroke; fb_label.TextColor3 = theme.text_dim; fb_dot.BackgroundColor3 = theme.green
-    else
-        fb_stroke.Color = theme.accent; fb_label.TextColor3 = theme.accent; fb_dot.BackgroundColor3 = theme.accent
-    end
-end
-
-local win = create("Frame", {
-    Name = "main", Size = UDim2.fromOffset(820, 540),
-    Position = UDim2.new(0.5,-410,0.5,-270),
-    BackgroundColor3 = theme.bg, ClipsDescendants = true, ZIndex = 1, Parent = gui,
-})
-corner(win, 8); add_stroke(win, theme.stroke_soft)
-local topbar = create("Frame", { Size = UDim2.new(1,0,0,34), BackgroundColor3 = theme.panel, Parent = win })
-create("Frame", { Size = UDim2.new(1,0,0,1), Position = UDim2.new(0,0,1,-1), BackgroundColor3 = theme.stroke_soft, Parent = topbar })
-local badge = create("Frame", { Size = UDim2.fromOffset(38,18), Position = UDim2.new(0,10,0.5,-9), BackgroundColor3 = theme.accent, Parent = topbar })
-corner(badge, 4)
-create("TextLabel", { Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Text = "SHO", Font = font_bold, TextSize = 10, TextColor3 = Color3.fromRGB(255,255,255), Parent = badge })
-create("TextLabel", {
-    Size = UDim2.fromOffset(120,14), Position = UDim2.new(0,56,0.5,-7), BackgroundTransparency = 1,
-    Text = "VERSION 2.0.1", Font = font_mono, TextSize = 9, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left, Parent = topbar,
-})
-local paid = create("Frame", { Size = UDim2.fromOffset(32,14), Position = UDim2.new(0,180,0.5,-7), BackgroundTransparency = 1, Parent = topbar })
-corner(paid, 3); add_stroke(paid, theme.accent_dim)
-create("TextLabel", { Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, Text = "PAID", Font = font_med, TextSize = 8, TextColor3 = theme.accent, Parent = paid })
-local minimize = create("TextButton", {
-    Size = UDim2.fromOffset(30,34), Position = UDim2.new(1,-64,0,0), BackgroundTransparency = 1,
-    Text = "-", Font = font_ui, TextSize = 14, TextColor3 = theme.text_dim, AutoButtonColor = false, Parent = topbar,
-})
-minimize.MouseEnter:Connect(function() minimize.TextColor3 = theme.text end)
-minimize.MouseLeave:Connect(function() minimize.TextColor3 = theme.text_dim end)
-local close = create("TextButton", {
-    Size = UDim2.fromOffset(34,34), Position = UDim2.new(1,-34,0,0), BackgroundTransparency = 1,
-    Text = "x", Font = font_ui, TextSize = 12, TextColor3 = theme.text_dim, AutoButtonColor = false, Parent = topbar,
-})
-close.MouseEnter:Connect(function() close.TextColor3 = theme.accent end)
-close.MouseLeave:Connect(function() close.TextColor3 = theme.text_dim end)
-make_draggable(win, topbar)
-
-local body = create("Frame", { Size = UDim2.new(1,0,1,-34-24), Position = UDim2.new(0,0,0,34), BackgroundTransparency = 1, Parent = win })
-local sidebar = create("Frame", { Size = UDim2.new(0,150,1,0), BackgroundColor3 = theme.sidebar, Parent = body })
-pad(sidebar, 8,8,8,8); vlist(sidebar, 1)
-local content = create("Frame", { Size = UDim2.new(1,-150-190,1,0), Position = UDim2.new(0,150,0,0), BackgroundColor3 = theme.content, Parent = body })
-pad(content, 12,6,12,14)
-local rpanel = create("Frame", { Size = UDim2.new(0,190,1,0), Position = UDim2.new(1,-190,0,0), BackgroundColor3 = theme.panel, Parent = body })
-pad(rpanel, 12,12,12,12); vlist(rpanel, 8)
-create("Frame", { Size = UDim2.new(0,1,1,0), Position = UDim2.new(0,149,0,0), BackgroundColor3 = theme.stroke_soft, Parent = body })
-create("Frame", { Size = UDim2.new(0,1,1,0), Position = UDim2.new(1,-190,0,0), BackgroundColor3 = theme.stroke_soft, Parent = body })
-
--- status bar
-local vessel_state = "King of Curses"
-local status_bar = create("Frame", {
-    Size = UDim2.new(1,0,0,24), Position = UDim2.new(0,0,1,-24),
-    BackgroundColor3 = theme.panel, Parent = win,
-})
-create("Frame", { Size = UDim2.new(1,0,0,1), BackgroundColor3 = theme.stroke_soft, Parent = status_bar })
-create("TextLabel", {
-    Size = UDim2.new(0,180,1,0), Position = UDim2.new(0,10,0,0), BackgroundTransparency = 1,
-    Text = "Vessel: " .. vessel_state, Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left, Parent = status_bar,
-})
-local function indicator(text, dot_color, right_x, w)
-    local wrap = create("Frame", {
-        Size = UDim2.fromOffset(w,24), AnchorPoint = Vector2.new(1,0),
-        Position = UDim2.new(1,-right_x,0,0), BackgroundTransparency = 1, Parent = status_bar,
-    })
-    local dot = create("Frame", {
-        Size = UDim2.fromOffset(5,5), Position = UDim2.new(0,0,0.5,-2),
-        BackgroundColor3 = dot_color, Parent = wrap,
-    })
-    corner(dot, 3)
-    create("TextLabel", {
-        Position = UDim2.new(0,10,0,0), Size = UDim2.new(1,-10,1,0), BackgroundTransparency = 1,
-        Text = text, Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = wrap,
-    })
-end
-indicator("Status", theme.green, 12, 60)
-indicator("Connected", theme.green, 82, 100)
-indicator("Paid", theme.accent, 190, 60)
-
---=============================================================
--- pages / nav
---=============================================================
-local pages = {}
-local function new_page(id)
-    local p = create("ScrollingFrame", {
-        Name = id, Size = UDim2.fromScale(1,1), BackgroundTransparency = 1, BorderSizePixel = 0,
-        ScrollBarThickness = 3, ScrollBarImageColor3 = Color3.fromRGB(70,70,80),
-        ScrollBarImageTransparency = 0.35,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        CanvasSize = UDim2.new(0,0,0,0), Visible = false, Parent = content,
-    })
-    pad(p, 0,10,16,0); vlist(p, 16)
-    pages[id] = p
-    return p
-end
-local nav_items = {}
-local current_page = nil
-local function set_page(id)
-    current_page = id
-    for key, item in pairs(nav_items) do
-        item.label.TextColor3 = (key == id) and theme.text or theme.text_dim
-        item.label.Font = (key == id) and font_med or font_ui
-        item.bar.Visible = (key == id)
-    end
-    for key, page in pairs(pages) do page.Visible = (key == id) end
-    if pages[id] then pages[id].CanvasPosition = Vector2.new(0,0) end
-end
-local function add_nav_item(label_text, id)
-    local row = create("TextButton", {
-        Size = UDim2.new(1,0,0,20), BackgroundTransparency = 1,
-        Text = "", AutoButtonColor = false, LayoutOrder = next_order(), Parent = sidebar,
-    })
-    corner(row, 4)
-    local bar = create("Frame", {
-        Size = UDim2.new(0,2,0,10), Position = UDim2.new(0,6,0.5,-5),
-        BackgroundColor3 = theme.accent, Visible = false, Parent = row,
-    })
-    corner(bar, 1)
-    local label = create("TextLabel", {
-        Position = UDim2.new(0,16,0,0), Size = UDim2.new(1,-20,1,0), BackgroundTransparency = 1,
-        Text = label_text, Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
-    })
-    row.MouseEnter:Connect(function() if current_page ~= id then TweenService:Create(row, TweenInfo.new(0.1), { BackgroundTransparency = 0.4 }):Play() end end)
-    row.MouseLeave:Connect(function() TweenService:Create(row, TweenInfo.new(0.1), { BackgroundTransparency = 1 }):Play() end)
-    row.MouseButton1Click:Connect(function() set_page(id) end)
-    nav_items[id] = { row = row, label = label, bar = bar }
-end
-local function add_collapsible_group(title, items)
-    local group_row = create("TextButton", {
-        Size = UDim2.new(1,0,0,20), BackgroundTransparency = 1,
-        Text = "", AutoButtonColor = false, LayoutOrder = next_order(), Parent = sidebar,
-    })
-    create("TextLabel", {
-        Size = UDim2.new(1,-20,1,0), BackgroundTransparency = 1, Text = title,
-        Font = font_med, TextSize = 9, TextColor3 = theme.text_faint,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = group_row,
-    })
-    local chev = create("TextLabel", {
-        Size = UDim2.fromOffset(20,20), Position = UDim2.new(1,-20,0,0), BackgroundTransparency = 1,
-        Text = "v", Font = font_ui, TextSize = 10, TextColor3 = theme.text_dim, Parent = group_row,
-    })
-    local rows = {}
-    for _, item in ipairs(items) do add_nav_item(item[1], item[2]) table.insert(rows, nav_items[item[2]].row) end
-    local open = true
-    group_row.MouseButton1Click:Connect(function()
-        open = not open
-        for _, r in ipairs(rows) do r.Visible = open end
-        chev.Text = open and "v" or ">"
-    end)
-end
-local function nav_spacer(h)
-    create("Frame", { Size = UDim2.new(1,0,0,h or 6), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = sidebar })
-end
-
---=============================================================
--- right panel header
---=============================================================
-local function panel_header(text)
-    create("TextLabel", {
-        Size = UDim2.new(1,0,0,16), BackgroundTransparency = 1, Text = text,
-        Font = font_med, TextSize = 10, TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = rpanel,
-    })
-end
-panel_header("Configs")
-local grid = create("Frame", { Size = UDim2.new(1,0,0,46), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = rpanel })
-create("UIGridLayout", { CellSize = UDim2.fromOffset(38,20), CellPadding = UDim2.fromOffset(4,4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
-for i, name in ipairs({"Save","Load","Delete","Copy","Paste","Reset","Folder","Reload"}) do
-    make_button(grid, name, 38, 20, function() end, { textsize = 9, layout_order = i })
-end
-panel_header("HUD")
-mini_toggle_row(rpanel, "Watermark", false)
-mini_toggle_row(rpanel, "Keybinds", false)
-mini_toggle_row(rpanel, "Notifications", false)
-panel_header("Config")
-mini_toggle_row(rpanel, "Config Is External", false)
-
---=============================================================
--- ENGINE  — tất cả tính năng
---=============================================================
-
--- helpers
 local function dist(a, b) if not a or not b then return math.huge end return (a - b).Magnitude end
-local function my_root()
-    local c = lp.Character; if not c then return nil end
-    return c:FindFirstChild("HumanoidRootPart")
-end
-local function my_hum()
-    local c = lp.Character; if not c then return nil end
-    return c:FindFirstChildOfClass("Humanoid")
-end
-local function get_root(p)
+local function root_of(p)
     if not p or not p.Character then return nil end
     return p.Character:FindFirstChild("HumanoidRootPart")
 end
-local function nearest_enemy(max_d, alive_only)
+local function my_root()
+    if not lp.Character then return nil end
+    return lp.Character:FindFirstChild("HumanoidRootPart")
+end
+local function my_hum()
+    if not lp.Character then return nil end
+    return lp.Character:FindFirstChildOfClass("Humanoid")
+end
+local function nearest(maxd, alive)
     local my = my_root(); if not my then return nil, math.huge end
-    local best, bd = nil, max_d or math.huge
+    local best, bd = nil, maxd or math.huge
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= lp then
-            local r = get_root(p)
+            local r = root_of(p)
             local h = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
-            if r and (not alive_only or (h and h.Health > 0)) then
+            if r and (not alive or (h and h.Health > 0)) then
                 local d = dist(my.Position, r.Position)
                 if d < bd then best, bd = p, d end
             end
@@ -911,21 +224,19 @@ local function nearest_enemy(max_d, alive_only)
     end
     return best, bd
 end
-
-local function face_enemy(enemy, delay, duration)
+local function face(enemy, delay)
     task.spawn(function()
-        if delay > 0 then task.wait(delay) end
-        local my = my_root(); local er = get_root(enemy)
+        if delay and delay > 0 then task.wait(delay) end
+        local my = my_root(); local er = root_of(enemy)
         if not my or not er then return end
         local dir = er.Position - my.Position
         dir = Vector3.new(dir.X, 0, dir.Z)
         if dir.Magnitude < 0.01 then return end
-        my.CFrame = CFrame.lookAt(my.Position, my.Position + dir)
+        pcall(function() my.CFrame = CFrame.lookAt(my.Position, my.Position + dir) end)
     end)
 end
-
-local function enemy_aiming_at_me(enemy)
-    local er = get_root(enemy); local my = my_root()
+local function aiming_at(enemy)
+    local er = root_of(enemy); local my = my_root()
     if not er or not my then return true end
     local to_me = my.Position - er.Position
     to_me = Vector3.new(to_me.X, 0, to_me.Z)
@@ -935,85 +246,512 @@ local function enemy_aiming_at_me(enemy)
     return look:Dot(to_me.Unit) > 0.3
 end
 
-local function get_enemy_velocity(enemy)
-    local er = get_root(enemy)
-    if not er then return Vector3.zero end
-    return er.AssemblyLinearVelocity or Vector3.zero
+-- ========== GUI ==========
+local function get_host()
+    local ok, h = pcall(function() if type(gethui) == "function" then return gethui() end end)
+    if ok and h then return h end
+    return CoreGui
+end
+local gui = mk("ScreenGui", {
+    Name = "jjs_killer", ResetOnSpawn = false, IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 100,
+})
+pcall(function() if syn and syn.protect_gui then syn.protect_gui(gui) end end)
+pcall(function() if protect_gui then protect_gui(gui) end end)
+local host = get_host()
+if not pcall(function() gui.Parent = host end) then
+    pcall(function() gui.Parent = CoreGui end)
 end
 
--- anim registry
-local REGISTRY = {}
-local CORE_ANIMATORS = {}
-local function register_anim(digits, name)
-    local e = REGISTRY[digits]
-    if not e then e = { count = 0, first_t = tick(), last_t = 0, name = name or "" }; REGISTRY[digits] = e end
-    e.count = e.count + 1; e.last_t = tick()
-    if name and name ~= "" then e.name = name end
+-- drag
+local drag = {on = false, frame = nil, start = nil, origin = nil}
+local fbdrag = {on = false, moved = false, btn = nil, start = nil, origin = nil}
+UIS.InputChanged:Connect(function(i)
+    if i.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    if drag.on and drag.frame then
+        local d = i.Position - drag.start
+        drag.frame.Position = UDim2.new(drag.origin.X.Scale, drag.origin.X.Offset + d.X, drag.origin.Y.Scale, drag.origin.Y.Offset + d.Y)
+    end
+    if fbdrag.on and fbdrag.btn then
+        local d = i.Position - fbdrag.start
+        if d.Magnitude > 3 then fbdrag.moved = true end
+        fbdrag.btn.Position = UDim2.new(fbdrag.origin.X.Scale, fbdrag.origin.X.Offset + d.X, fbdrag.origin.Y.Scale, fbdrag.origin.Y.Offset + d.Y)
+    end
+end)
+UIS.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        drag.on = false; drag.frame = nil
+        fbdrag.on = false; fbdrag.btn = nil
+    end
+end)
+local function make_drag(frame, handle)
+    handle = handle or frame
+    handle.InputBegan:Connect(function(i)
+        if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        drag.on = true; drag.frame = frame; drag.start = i.Position; drag.origin = frame.Position
+    end)
 end
-JJS.registry = REGISTRY
-function JJS.dump_registry()
+
+-- check
+local function mk_check(parent, on_change)
+    local on = false
+    local box = mk("TextButton", {
+        Size = UDim2.fromOffset(18, 18), BackgroundColor3 = T.input,
+        Text = "", AutoButtonColor = false, Parent = parent,
+    })
+    rnd(box, 4)
+    local st = str(box, T.stroke, 1.2)
+    local dot = mk("Frame", {
+        Size = UDim2.fromOffset(8, 8), AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0), BackgroundColor3 = Color3.new(1, 1, 1),
+        BackgroundTransparency = 1, Parent = box,
+    })
+    rnd(dot, 4)
+    local api = {}
+    function api.set(v)
+        on = v and true or false
+        TweenService:Create(box, TweenInfo.new(0.1), {BackgroundColor3 = on and T.accent or T.input}):Play()
+        TweenService:Create(dot, TweenInfo.new(0.1), {BackgroundTransparency = on and 0 or 1}):Play()
+        st.Color = on and T.accent or T.stroke
+        if on_change then on_change(on) end
+    end
+    box.MouseButton1Click:Connect(function() api.set(not on) end)
+    return api
+end
+
+-- slider
+local function mk_slider(parent, label, minv, maxv, def, step, on_change)
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = ord(), Parent = parent,
+    })
+    vlist(row, 4)
+    local head = mk("Frame", {Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, LayoutOrder = 1, Parent = row})
+    mk("TextLabel", {
+        Size = UDim2.new(1, -70, 1, 0), BackgroundTransparency = 1, Text = label,
+        Font = FMED, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = head,
+    })
+    local val = mk("TextLabel", {
+        Size = UDim2.fromOffset(70, 14), Position = UDim2.new(1, -70, 0, 0),
+        BackgroundTransparency = 1, Text = fnum(def), Font = FMED, TextSize = 12,
+        TextColor3 = T.accent, TextXAlignment = Enum.TextXAlignment.Right, Parent = head,
+    })
+    local wrap = mk("Frame", {Size = UDim2.new(1, 0, 0, 14), BackgroundTransparency = 1, LayoutOrder = 2, Parent = row})
+    local bar = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 4), Position = UDim2.new(0, 0, 0.5, -2),
+        BackgroundColor3 = T.track, Parent = wrap,
+    })
+    rnd(bar, 2)
+    local pct = math.clamp((def - minv) / (maxv - minv), 0, 1)
+    local fill = mk("Frame", {Size = UDim2.new(pct, 0, 1, 0), BackgroundColor3 = T.accent, Parent = bar})
+    rnd(fill, 2)
+    local knob = mk("Frame", {
+        Size = UDim2.fromOffset(12, 12), AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(pct, 0, 0.5, 0), BackgroundColor3 = Color3.fromRGB(240, 240, 245), Parent = bar,
+    })
+    rnd(knob, 6)
+    local hit = mk("TextButton", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", Parent = wrap})
+    local cur, dragging = def, false
+    local function apply(v)
+        cur = math.clamp(v, minv, maxv)
+        if step then cur = math.floor(cur / step + 0.5) * step end
+        cur = math.clamp(cur, minv, maxv)
+        local p = (cur - minv) / (maxv - minv)
+        fill.Size = UDim2.new(p, 0, 1, 0)
+        knob.Position = UDim2.new(p, 0, 0.5, 0)
+        val.Text = fnum(cur)
+        if on_change then on_change(cur) end
+    end
+    hit.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            local a = (i.Position.X - wrap.AbsolutePosition.X) / math.max(wrap.AbsoluteSize.X, 1)
+            apply(minv + math.clamp(a, 0, 1) * (maxv - minv))
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local a = (i.Position.X - wrap.AbsolutePosition.X) / math.max(wrap.AbsoluteSize.X, 1)
+            apply(minv + math.clamp(a, 0, 1) * (maxv - minv))
+        end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    return api
+end
+
+-- row builders
+local function row_check(parent, title, desc, callback)
+    local r = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = ord(), Parent = parent,
+    })
+    mk("TextLabel", {
+        Size = UDim2.new(1, -34, 0, 14), BackgroundTransparency = 1, Text = title,
+        Font = FMED, TextSize = 12, TextColor3 = T.text,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = r,
+    })
+    if desc then
+        mk("TextLabel", {
+            Position = UDim2.new(0, 0, 0, 16), Size = UDim2.new(1, -34, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Text = desc,
+            Font = FUI, TextSize = 11, TextColor3 = T.dim, TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Parent = r,
+        })
+    end
+    local c = mk_check(r, callback)
+    c.frame = r
+    c.frame.Position = UDim2.new(0, 0, 0, 0)
+    -- move the actual check to top-right
+    c.box = nil
+    local real = r:FindFirstChildOfClass("TextButton")
+    if real then
+        real.Position = UDim2.new(1, -18, 0, 0)
+        real.AnchorPoint = Vector2.new(0, 0)
+    end
+end
+
+-- section
+local function section(parent, title)
+    local wrap = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = ord(), Parent = parent,
+    })
+    vlist(wrap, 8)
+    local h = mk("TextButton", {
+        Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = T.panel2,
+        Text = "", AutoButtonColor = false, LayoutOrder = 1, Parent = wrap,
+    })
+    rnd(h, 5); str(h, T.stroke_d)
+    mk("Frame", {Size = UDim2.new(0, 3, 0, 12), Position = UDim2.new(0, 8, 0.5, -6), BackgroundColor3 = T.accent, Parent = h})
+    mk("TextLabel", {
+        Position = UDim2.new(0, 18, 0, 0), Size = UDim2.new(1, -42, 1, 0),
+        BackgroundTransparency = 1, Text = title, Font = FMED, TextSize = 11,
+        TextColor3 = T.accent, TextXAlignment = Enum.TextXAlignment.Left, Parent = h,
+    })
+    local body = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, LayoutOrder = 2, Parent = wrap,
+    })
+    vlist(body, 14)
+    return body
+end
+
+-- main window
+local floating = mk("TextButton", {
+    Name = "float", Size = UDim2.fromOffset(88, 26), Position = UDim2.fromOffset(20, 20),
+    BackgroundColor3 = T.panel, Text = "", AutoButtonColor = false, ZIndex = 5, Parent = gui,
+})
+rnd(floating, 13)
+local fbs = str(floating, T.accent, 1.2)
+local fbl = mk("TextLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "JJS KILLER",
+    Font = FBOLD, TextSize = 10, TextColor3 = T.accent, Parent = floating,
+})
+floating.InputBegan:Connect(function(i)
+    if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    fbdrag.on = true; fbdrag.moved = false
+    fbdrag.btn = floating; fbdrag.start = i.Position; fbdrag.origin = floating.Position
+end)
+local function set_fb(shown)
+    if shown then
+        fbs.Color = T.stroke; fbl.TextColor3 = T.dim
+    else
+        fbs.Color = T.accent; fbl.TextColor3 = T.accent
+    end
+end
+
+local win = mk("Frame", {
+    Name = "main", Size = UDim2.fromOffset(820, 540),
+    Position = UDim2.new(0.5, -410, 0.5, -270), BackgroundColor3 = T.bg,
+    ClipsDescendants = true, ZIndex = 1, Parent = gui,
+})
+rnd(win, 8); str(win, T.stroke_d)
+local top = mk("Frame", {Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = T.panel, Parent = win})
+mk("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = T.stroke_d, Parent = top})
+mk("TextLabel", {
+    Size = UDim2.fromOffset(60, 14), Position = UDim2.new(0, 14, 0.5, -7),
+    BackgroundTransparency = 1, Text = "JJS v0.8", Font = FMONO, TextSize = 10,
+    TextColor3 = T.accent, TextXAlignment = Enum.TextXAlignment.Left, Parent = top,
+})
+local close = mk("TextButton", {
+    Size = UDim2.fromOffset(34, 34), Position = UDim2.new(1, -34, 0, 0),
+    BackgroundTransparency = 1, Text = "x", Font = FUI, TextSize = 12,
+    TextColor3 = T.dim, AutoButtonColor = false, Parent = top,
+})
+make_drag(win, top)
+
+local body = mk("Frame", {
+    Size = UDim2.new(1, 0, 1, -34), Position = UDim2.new(0, 0, 0, 34),
+    BackgroundTransparency = 1, Parent = win,
+})
+local side = mk("Frame", {Size = UDim2.new(0, 150, 1, 0), BackgroundColor3 = T.side, Parent = body})
+pad(side, 8, 8, 8, 8); vlist(side, 1)
+local content = mk("Frame", {
+    Size = UDim2.new(1, -150, 1, 0), Position = UDim2.new(0, 150, 0, 0),
+    BackgroundColor3 = T.bg, Parent = body,
+})
+pad(content, 12, 12, 12, 12)
+mk("Frame", {Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(0, 149, 0, 0), BackgroundColor3 = T.stroke_d, Parent = body})
+
+-- ========== PAGES ==========
+local pages = {}
+local function new_page(id)
+    local p = mk("ScrollingFrame", {
+        Name = id, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+        BorderSizePixel = 0, ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Color3.fromRGB(70, 70, 80),
+        ScrollBarImageTransparency = 0.35,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        CanvasSize = UDim2.new(0, 0, 0, 0), Visible = false, Parent = content,
+    })
+    pad(p, 0, 10, 16, 0); vlist(p, 16)
+    pages[id] = p
+    return p
+end
+local nav_items = {}
+local cur_page = nil
+local function set_page(id)
+    cur_page = id
+    for k, item in pairs(nav_items) do
+        item.label.TextColor3 = (k == id) and T.text or T.dim
+        item.label.Font = (k == id) and FMED or FUI
+        item.bar.Visible = (k == id)
+    end
+    for k, p in pairs(pages) do p.Visible = (k == id) end
+    if pages[id] then pages[id].CanvasPosition = Vector2.new(0, 0) end
+end
+local function add_nav(name, id)
+    local r = mk("TextButton", {
+        Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1,
+        Text = "", AutoButtonColor = false, LayoutOrder = ord(), Parent = side,
+    })
+    rnd(r, 4)
+    local bar = mk("Frame", {
+        Size = UDim2.new(0, 2, 0, 10), Position = UDim2.new(0, 6, 0.5, -5),
+        BackgroundColor3 = T.accent, Visible = false, Parent = r,
+    })
+    rnd(bar, 1)
+    local lbl = mk("TextLabel", {
+        Position = UDim2.new(0, 16, 0, 0), Size = UDim2.new(1, -20, 1, 0),
+        BackgroundTransparency = 1, Text = name, Font = FUI, TextSize = 11,
+        TextColor3 = T.dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = r,
+    })
+    r.MouseButton1Click:Connect(function() set_page(id) end)
+    nav_items[id] = {label = lbl, bar = bar}
+end
+local function nav_group(title, items)
+    local gr = mk("TextButton", {
+        Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1,
+        Text = "", AutoButtonColor = false, LayoutOrder = ord(), Parent = side,
+    })
+    mk("TextLabel", {
+        Size = UDim2.new(1, -20, 1, 0), BackgroundTransparency = 1, Text = title,
+        Font = FMED, TextSize = 9, TextColor3 = T.faint,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = gr,
+    })
+    local rows = {}
+    for _, it in ipairs(items) do
+        add_nav(it[1], it[2])
+        table.insert(rows, nav_items[it[2]].label.Parent)
+    end
+    local open = true
+    gr.MouseButton1Click:Connect(function()
+        open = not open
+        for _, r in ipairs(rows) do r.Visible = open end
+    end)
+end
+local function nav_gap(h)
+    mk("Frame", {Size = UDim2.new(1, 0, 0, h or 6), BackgroundTransparency = 1, LayoutOrder = ord(), Parent = side})
+end
+
+-- pages actual
+local pg_cg = new_page("cg")
+local pg_cc = new_page("cc")
+local pg_mm = new_page("mm")
+local pg_am = new_page("am")
+local pg_qte = new_page("qte")
+local pg_macro = new_page("macro")
+local pg_qol = new_page("qol")
+local pg_esp = new_page("esp")
+local pg_info = new_page("info")
+
+-- combat general
+local s1 = section(pg_cg, "MAIN SETTINGS")
+row_check(s1, "Auto Parry", "Master toggle. Parries on animation trigger.", function(v) F.auto_parry = v end)
+row_check(s1, "Aim Check", "Only parry when attack is aimed at you.", function(v) F.aim_check = v end)
+row_check(s1, "Face Target", "Rotate to face enemy on parry.", function(v) F.face_target = v end)
+row_check(s1, "Animation Logger", "Print animation IDs to console (F9).", function(v) F.anim_logger = v end)
+row_check(s1, "Disable When Unfocused", "Pause when window not focused.", function(v) F.disable_unfocused = v end)
+row_check(s1, "Auto Parry Dash", "Auto block when enemy dashes in.", function(v) F.parry_dash = v end)
+
+local s2 = section(pg_cg, "PARRY MECHANICS")
+mk_slider(s2, "Response Delay (s)", 0, 1, 0.12, 0.01, function(v) CFG.parry_delay = v end)
+mk_slider(s2, "Parry Duration (s)", 0, 2, 0.10, 0.01, function(v) CFG.parry_hold = v end)
+mk_slider(s2, "Hold After Attack (s)", 0, 2, 0, 0.01, function(v) CFG.parry_hold_after = v end)
+mk_slider(s2, "Detection Range", 1, 50, 18, 0.5, function(v) CFG.parry_range_skill = v end)
+mk_slider(s2, "M1 Range", 1, 50, 11, 0.5, function(v) CFG.parry_range_m1 = v end)
+mk_slider(s2, "Success Rate", 0, 1, 1, 0.01, function(v) CFG.parry_success = v end)
+
+-- combat combat
+local c1 = section(pg_cc, "OFFENSE")
+row_check(c1, "Auto Punch", "Spam M1 at enemies in range.", function(v) F.auto_m1 = v end)
+row_check(c1, "Auto Dash Assist", "Dash + M1 at target.", function(v) F.auto_dash_assist = v end)
+row_check(c1, "Auto Black Flash", "M1 re-press in window.", function(v) F.auto_bf = v end)
+row_check(c1, "Auto Counter", "Press counter slot on reaction.", function(v) F.auto_counter = v end)
+row_check(c1, "Auto Harada Dodge", "M1 + M2 on incoming.", function(v) F.auto_harada = v end)
+row_check(c1, "Glide To Target", "MoveTo enemy when too far.", function(v) F.glide_to = v end)
+row_check(c1, "Human Combo", "Stop after 3 hits.", function(v) F.human_combo = v end)
+row_check(c1, "Look At Target", "Face enemy while idle.", function(v) CFG.look_at = v end)
+
+local c2 = section(pg_cc, "PARAMETERS")
+mk_slider(c2, "Attack Delay", 0, 1, 0.08, 0.01, function(v) CFG.m1_interval = v end)
+mk_slider(c2, "Hold M1 Time", 0, 1, 0.06, 0.01, function(v) CFG.m1_hold = v end)
+mk_slider(c2, "Attack Distance", 1, 25, 11.5, 0.5, function(v) CFG.m1_outer = v end)
+mk_slider(c2, "Attack Chance", 0, 1, 1, 0.01, function(v) CFG.m1_chance = v end)
+mk_slider(c2, "Black Flash Delay", 0, 0.5, 0.08, 0.005, function(v) CFG.bf_delay = v end)
+
+local c3 = section(pg_cc, "DEFENSE")
+row_check(c3, "Auto Block Skills", "Auto block when enemy nearby.", function(v) F.auto_block_skills = v end)
+row_check(c3, "Nail Projectile Block", "Block nail/projectile parts.", function(v) F.nail_block = v end)
+
+-- misc misc
+local m1 = section(pg_mm, "MISC")
+row_check(m1, "Camera Lock", "Lock cam onto nearest target.", function(v) F.camera_lock = v end)
+row_check(m1, "Blatant Mode", "Remove smoothing.", function(v) F.blatant = v end)
+row_check(m1, "No Dash Cooldown", "Faster dash key pulse.", function(v) F.no_dash_cd = v end)
+row_check(m1, "No Stun", "Strip stun attributes.", function(v) F.no_stun = v end)
+row_check(m1, "Side Dash (Dodge)", "Strafe dash on incoming.", function(v) F.side_dash = v end)
+
+-- moves
+local mv = section(pg_am, "AUTO MOVES")
+row_check(mv, "Auto Dash", "Dash whenever possible.", function(v) F.auto_dash = v end)
+row_check(mv, "Auto Jump", "Jump on interval.", function(v) F.auto_jump = v end)
+row_check(mv, "Bunny Hop", "Jump while moving.", function(v) F.bunny_hop = v end)
+mk_slider(mv, "Jump Interval", 0.1, 2, 0.4, 0.05, function(v) CFG.jump_int = v end)
+mk_slider(mv, "Bhop Interval", 0.05, 1, 0.15, 0.01, function(v) CFG.bhop_int = v end)
+
+-- qte
+local q1 = section(pg_qte, "QTE / MINIGAME")
+row_check(q1, "Auto QTE (Clash)", "Spam keys during clashes.", function(v) F.auto_qte = v end)
+row_check(q1, "Auto Final Judgement", "Key spam variant.", function(v) F.auto_fj = v end)
+row_check(q1, "Auto Beam Minigame", "Key spam variant.", function(v) F.auto_beam = v end)
+row_check(q1, "Auto Ratio Nanami", "Auto ratio timing.", function(v) F.auto_ratio = v end)
+mk_slider(q1, "Keys Per Second", 1, 30, 10, 1, function(v) CFG.qte_kps = v end)
+
+-- macros
+local mc = section(pg_macro, "RECORDER")
+row_check(mc, "Recording", "Toggle recording on/off.", function(v)
+    if v then
+        _G.__jjs_macro = {events = {}, active = true, start = tick()}
+    else
+        if _G.__jjs_macro then _G.__jjs_macro.active = false end
+    end
+end)
+row_check(mc, "Playback", "Toggle playback loop.", function(v)
+    if v and _G.__jjs_macro and #_G.__jjs_macro.events > 0 then
+        task.spawn(function()
+            while F.play might_be_nil and false do end
+            while _G.__jjs_macro and _G.__jjs_macro.playing do
+                for _, ev in ipairs(_G.__jjs_macro.events) do
+                    task.wait(math.max(0.01, ev.dt))
+                    if ev.key then press_key(ev.key, 0.03)
+                    elseif ev.m1 then press_m1(0.03)
+                    elseif ev.m2 then press_m2(0.03) end
+                end
+            end
+        end)
+        _G.__jjs_macro.playing = true
+    else
+        if _G.__jjs_macro then _G.__jjs_macro.playing = false end
+    end
+end)
+
+-- qol
+local ql = section(pg_qol, "VISUAL")
+row_check(ql, "Fullbright", "Flatten lighting.", function(v) F.fullbright = v; apply_fullbright(v) end)
+row_check(ql, "FPS Boost", "Drop render costs.", function(v) F.fps_boost = v; apply_fps_boost(v) end)
+row_check(ql, "Cull Combat Effects", "Destroy effects folders periodically.", function(v) F.cull_fx = v end)
+row_check(ql, "No Screen Shake", "Suppress camera shake.", function(v) F.no_shake = v end)
+
+local ql2 = section(pg_qol, "STATE CLEANUP")
+row_check(ql2, "Allow Jump", "Strip NoJump.", function(v) F.allow_jump = v end)
+row_check(ql2, "Allow Dash", "Strip NoDash.", function(v) F.allow_dash = v end)
+row_check(ql2, "Allow Block", "Strip NoBlock.", function(v) F.allow_block = v end)
+row_check(ql2, "Allow Sprint", "Strip NoSprint.", function(v) F.allow_sprint = v end)
+row_check(ql2, "Allow Attack", "Strip NoM1.", function(v) F.allow_attack = v end)
+row_check(ql2, "Unlock Emotes Slot", "Enable emote UI buttons.", function(v) F.unlock_emotes = v end)
+row_check(ql2, "Auto Rejoin", "Rejoin on disconnect.", function(v) F.auto_rejoin = v end)
+row_check(ql2, "Anti-AFK", "Keep-alive on idle.", function(v) F.anti_afk = v end)
+
+-- esp
+local e1 = section(pg_esp, "WALLHACK")
+row_check(e1, "Enable ESP", "Master switch.", function(v) F.esp = v end)
+row_check(e1, "Players ESP", "Highlight players.", function(v) F.esp_players = v end)
+row_check(e1, "Dummies/NPC ESP", "Highlight NPCs.", function(v) F.esp_dummies = v end)
+row_check(e1, "Item ESP", "Highlight items.", function(v) F.esp_items = v end)
+mk_slider(e1, "Max Distance", 0, 2000, 500, 50, function(v) CFG.esp_max = v end)
+
+-- info
+local i1 = section(pg_info, "BUILD")
+mk("TextLabel", {Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = "v0.8 ascii-only", Font = FMED, TextSize = 11, TextColor3 = T.accent, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = ord(), Parent = i1})
+mk("TextLabel", {Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = "Author: Lee / Nyx", Font = FUI, TextSize = 11, TextColor3 = T.dim, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = ord(), Parent = i1})
+mk("TextLabel", {Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = "Discord: jvHDKVKAnC", Font = FUI, TextSize = 11, TextColor3 = T.dim, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = ord(), Parent = i1})
+local dump_btn = mk("TextButton", {Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = T.accent, Text = "Dump Registry", Font = FBOLD, TextSize = 11, TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = false, LayoutOrder = ord(), Parent = i1})
+rnd(dump_btn, 5)
+dump_btn.MouseButton1Click:Connect(function()
     local list = {}
-    for id, e in pairs(REGISTRY) do table.insert(list, { id = id, name = e.name, count = e.count }) end
-    table.sort(list, function(a,b) return a.count > b.count end)
-    print("[jjs-core] === anim registry dump ===")
-    for _, r in ipairs(list) do print(string.format("  id=%s | name=%s | hits=%d", r.id, r.name ~= "" and r.name or "?", r.count)) end
-end
+    for id, e in pairs(_G.__jjs_reg or {}) do table.insert(list, {id = id, name = e.name, c = e.count}) end
+    table.sort(list, function(a, b) return a.c > b.c end)
+    print("[jjs] registry dump")
+    for _, r in ipairs(list) do print(string.format("  id=%s name=%s hits=%d", r.id, r.name or "?", r.c)) end
+end)
 
-local function is_m1_anim(name)
-    if not name then return false end
+-- nav tree
+nav_group("COMBAT", {{"General", "cg"}, {"Combat", "cc"}})
+nav_gap(4)
+nav_group("MISC", {{"Misc", "mm"}, {"Moves", "am"}, {"QTE", "qte"}})
+nav_gap(4)
+nav_group("UTILITY", {{"Macros", "macro"}, {"Player QoL", "qol"}})
+nav_gap(4)
+nav_group("VISUALS", {{"ESP", "esp"}})
+nav_gap(4)
+nav_group("SETTINGS", {{"Info", "info"}})
+
+-- ========== ENGINE ==========
+_G.__jjs_reg = _G.__jjs_reg or {}
+
+local function is_benign(name)
+    if not name or name == "" then return true end
     local n = name:lower()
-    return n:find("m1") or n:find("punch") or n:find("combo") or n:find("melee") or n:find("m2") and true or false
-end
-local function is_benign_anim(name)
-    if not name then return true end
-    local n = name:lower()
-    for _, h in ipairs({"idle","walk","run","jump","fall","climb","swim","emote","dance","toolnone","sit","stand","equip","unequip","spawn"}) do
+    for _, h in ipairs({"idle", "walk", "run", "jump", "fall", "climb", "swim", "emote", "dance", "toolnone", "sit", "stand", "equip", "spawn"}) do
         if n:find(h, 1, true) then return true end
     end
     return false
 end
 
---=============================================================
--- parry execution
---=============================================================
-local function execute_parry(enemy, is_m1)
-    if not JJS.F.auto_parry then return end
-    if enemy and JJS.F.aim_check and not enemy_aiming_at_me(enemy) then return end
-    if math.random() > JJS.CFG.parry_success then return end
-
-    local range = is_m1 and JJS.CFG.parry_range_m1 or JJS.CFG.parry_range_skill
+local function do_parry(enemy, is_m1)
+    if not F.auto_parry then return end
+    if enemy and F.aim_check and not aiming_at(enemy) then return end
+    if math.random() > CFG.parry_success then return end
+    local rng = is_m1 and CFG.parry_range_m1 or CFG.parry_range_skill
     if enemy then
-        local my = my_root(); local er = get_root(enemy)
-        if my and er and dist(my.Position, er.Position) > range then return end
+        local my = my_root(); local er = root_of(enemy)
+        if my and er and dist(my.Position, er.Position) > rng then return end
     end
-
-    -- dự đoán vị trí (không đổi timing nhưng ảnh hưởng tới aim check nếu có)
-    if enemy and JJS.CFG.parry_motion_pred > 0 then
-        local er = get_root(enemy)
-        local vel = er and er.AssemblyLinearVelocity or Vector3.zero
-        -- cập nhật aim check với vị trí dự đoán
-        face_enemy(enemy, 0, 0)
-    end
-
-    if JJS.F.face_target or JJS.CFG.face_target then
-        face_enemy(enemy, JJS.CFG.pre_face_delay, JJS.CFG.face_duration)
-    end
-
+    if F.face_target and enemy then face(enemy, CFG.pre_face_delay) end
     task.spawn(function()
-        task.wait(JJS.CFG.parry_delay + JJS.CFG.parry_extra_delay + jitter())
-        JJS.F.parry_active = true
-        JJS.mouse(2, JJS.CFG.parry_hold + JJS.CFG.parry_extra_hold)
-        task.wait(JJS.CFG.parry_hold_after)
-        JJS.F.parry_active = false
+        task.wait(CFG.parry_delay + CFG.parry_extra_delay + jit())
+        press_m2(CFG.parry_hold + CFG.parry_extra_hold)
+        if CFG.parry_hold_after > 0 then task.wait(CFG.parry_hold_after) end
     end)
 end
 
---=============================================================
--- anim hook — enemy
---=============================================================
-local function hook_enemy_animator(enemy, animator)
-    if CORE_ANIMATORS[animator] then return end
-    CORE_ANIMATORS[animator] = true
+local anim_hooked = {}
+local function hook_anim(enemy, animator)
+    if anim_hooked[animator] then return end
+    anim_hooked[animator] = true
     animator.AnimationPlayed:Connect(function(track)
         local ok, anim = pcall(function() return track.Animation end)
         if not ok or not anim then return end
@@ -1021,22 +759,25 @@ local function hook_enemy_animator(enemy, animator)
         local digits = id:match("(%d+)")
         if not digits then return end
         local name = anim.Name or ""
-        register_anim(digits, name)
-        if JJS.F.anim_logger then
+        local reg = _G.__jjs_reg[digits]
+        if not reg then reg = {count = 0, name = name}; _G.__jjs_reg[digits] = reg end
+        reg.count = reg.count + 1
+        if name ~= "" then reg.name = name end
+        if F.anim_logger then
             print(string.format("[jjs-learn] %s | %s | id=%s", enemy.Name, name ~= "" and name or "?", digits))
         end
-        if is_benign_anim(name) then return end
-        execute_parry(enemy, is_m1_anim(name))
+        if not is_benign(name) then do_parry(enemy, false) end
     end)
 end
-local ENEMY_WATCHED = {}
+
+local enemy_watched = {}
 local function watch_enemy(p)
-    if p == lp or ENEMY_WATCHED[p] then return end
-    ENEMY_WATCHED[p] = true
-    local function hook_char(char)
-        local hum = char:WaitForChild("Humanoid", 5); if not hum then return end
-        local animator = hum:WaitForChild("Animator", 5); if not animator then return end
-        hook_enemy_animator(p, animator)
+    if p == lp or enemy_watched[p] then return end
+    enemy_watched[p] = true
+    local function hook_char(ch)
+        local hum = ch:WaitForChild("Humanoid", 5); if not hum then return end
+        local anim = hum:WaitForChild("Animator", 5); if not anim then return end
+        hook_anim(p, anim)
     end
     if p.Character then task.spawn(hook_char, p.Character) end
     p.CharacterAdded:Connect(hook_char)
@@ -1044,202 +785,148 @@ end
 for _, p in ipairs(Players:GetPlayers()) do watch_enemy(p) end
 Players.PlayerAdded:Connect(watch_enemy)
 
---=============================================================
--- self animator (cho black flash, dodge)
---=============================================================
-local SELF_ANIM = nil
-local function hook_self_animator()
-    local char = lp.Character; if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
-    local animator = hum:FindFirstChildOfClass("Animator"); if not animator then return end
-    if SELF_ANIM == animator then return end
-    SELF_ANIM = animator
-    animator.AnimationPlayed:Connect(function(track)
-        local ok, anim = pcall(function() return track.Animation end)
-        if not ok or not anim then return end
-        local n = (anim.Name or ""):lower()
-
-        -- Black Flash: khi đánh M1 xong, bấm M1 ngay
-        if JJS.F.auto_bf and (n:find("m1") or n:find("punch") or n:find("combo") or n:find("attack")) then
-            local delay = JJS.CFG.bf_delay + JJS.CFG.bf_shift + jitter()
-            if JJS.F.blatant_mode then delay = 0.03 end
-            task.spawn(function() task.wait(delay); JJS.mouse(1, 0.05) end)
+-- self animator (BF, dodge)
+local self_anim
+local function hook_self()
+    local ch = lp.Character; if not ch then return end
+    local hum = ch:FindFirstChildOfClass("Humanoid"); if not hum then return end
+    local anim = hum:FindFirstChildOfClass("Animator"); if not anim then return end
+    if self_anim == anim then return end
+    self_anim = anim
+    anim.AnimationPlayed:Connect(function(track)
+        local ok, a = pcall(function() return track.Animation end)
+        if not ok or not a then return end
+        local n = (a.Name or ""):lower()
+        if F.auto_bf and (n:find("m1") or n:find("punch") or n:find("combo") or n:find("attack")) then
+            local d = CFG.bf_delay + CFG.bf_shift + jit()
+            if F.blatant then d = 0.03 end
+            task.spawn(function() task.wait(d); press_m1(0.05) end)
         end
-
-        -- Haruta dodge: thấy anim attack của địch chưa, khá đơn giản — bấm M1+M2
-        if JJS.F.auto_harada then
-            task.spawn(function()
-                task.wait(JJS.CFG.dodge_delay + jitter())
-                JJS.mouse(2, 0.05)
-                task.wait(0.01)
-                JJS.mouse(1, 0.05)
-            end)
+        if F.auto_harada then
+            task.spawn(function() task.wait(CFG.dodge_delay + jit()); press_m2(0.05); task.wait(0.01); press_m1(0.05) end)
         end
     end)
 end
-lp.CharacterAdded:Connect(function() task.wait(1.5); task.spawn(hook_self_animator) end)
-if lp.Character then task.wait(0.5); task.spawn(hook_self_animator) end
+lp.CharacterAdded:Connect(function()
+    task.spawn(function() task.wait(1.5); hook_self() end)
+end)
+task.spawn(function() task.wait(0.5); hook_self() end)
 
---=============================================================
--- auto m1 loop
---=============================================================
-local combo_hits = 0
-local last_parry_t = 0
+-- m1 loop
+local combo = 0
 task.spawn(function()
     while true do
         task.wait(0.05)
-        if JJS.F.auto_m1 then
-            if not focus_ok() then continue end
-            if JJS.CFG.block_m1_parry and JJS.F.parry_active then continue end
-            if math.random() > JJS.CFG.m1_chance then continue end
-            if JJS.F.human_combo and combo_hits >= 3 then
-                combo_hits = 0
-                task.wait(0.6)
-                continue
-            end
-            local enemy, d = nearest_enemy(JJS.CFG.m1_outer_range + 3, true)
-            if enemy and d <= JJS.CFG.m1_outer_range then
-                if JJS.F.look_at_target then face_enemy(enemy, 0, 0) end
-                JJS.mouse(1, JJS.CFG.m1_hold)
-                combo_hits = combo_hits + 1
-                task.wait(JJS.CFG.m1_interval + jitter())
-            elseif JJS.F.glide_target and enemy then
-                local er = get_root(enemy)
-                local hum = my_hum()
-                if er and hum and d and d > JJS.CFG.m1_outer_range then
-                    pcall(function() hum:MoveTo(er.Position) end)
-                end
-                task.wait(0.15)
-            end
-        else
-            combo_hits = 0
-        end
-    end
-end)
-
---=============================================================
--- look at / camera lock
---=============================================================
-task.spawn(function()
-    while true do
-        task.wait(0.1)
-        if JJS.CFG.look_at_target or JJS.F.camera_lock then
-            local enemy, d = nearest_enemy(JJS.CFG.look_detect_dist, true)
-            if enemy and d and d <= JJS.CFG.look_detect_dist then
-                if JJS.CFG.look_at_target then face_enemy(enemy, 0, 0) end
-                if JJS.F.camera_lock then
-                    local er = get_root(enemy)
-                    local cam = workspace.CurrentCamera
-                    if er and cam then
-                        pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, er.Position) end)
+        if F.auto_m1 and focused() then
+            if math.random() <= CFG.m1_chance then
+                if F.human_combo and combo >= 3 then
+                    combo = 0
+                    task.wait(0.6)
+                else
+                    local enemy, d = nearest(CFG.m1_outer + 3, true)
+                    if enemy and d and d <= CFG.m1_outer then
+                        if CFG.look_at then face(enemy, 0) end
+                        press_m1(CFG.m1_hold + jit())
+                        combo = combo + 1
                     end
                 end
             end
+        else
+            combo = 0
         end
     end
 end)
 
---=============================================================
--- auto dash / jump / bhop
---=============================================================
+-- look at + camera
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if CFG.look_at or F.camera_lock then
+            local enemy, d = nearest(CFG.look_dist, true)
+            if enemy then
+                if CFG.look_at then face(enemy, 0) end
+                if F.camera_lock then
+                    local er = root_of(enemy); local cam = workspace.CurrentCamera
+                    if er and cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, er.Position) end) end
+                end
+            end
+        end
+    end
+end)
+
+-- dash / jump / bhop
 task.spawn(function()
     while true do
         task.wait(0.05)
-        if JJS.F.auto_jump then
-            JJS.key(Enum.KeyCode.Space, 0.05)
-            task.wait(JJS.CFG.auto_jump_interval + jitter())
-        end
+        if F.auto_jump and focused() then
+            press_key(Enum.KeyCode.Space, 0.05)
+            task.wait(CFG.jump_int + jit())
+        else task.wait(0.1) end
     end
 end)
 task.spawn(function()
     while true do
         task.wait(0.05)
-        if JJS.F.bunny_hop then
-            local hum = my_hum()
-            if hum and hum.MoveDirection.Magnitude > 0.1 then
-                JJS.key(Enum.KeyCode.Space, 0.03)
-            end
-            task.wait(JJS.CFG.bhop_interval + jitter())
-        end
+        if F.bunny_hop and focused() then
+            local h = my_hum()
+            if h and h.MoveDirection.Magnitude > 0.1 then press_key(Enum.KeyCode.Space, 0.03) end
+            task.wait(CFG.bhop_int + jit())
+        else task.wait(0.1) end
     end
 end)
 task.spawn(function()
     while true do
         task.wait(1.5)
-        if JJS.F.auto_dash then JJS.key(JJS.CFG.dash_key, 0.05) end
+        if F.auto_dash and focused() then press_key(CFG.dash_key, 0.05) end
     end
 end)
 task.spawn(function()
     while true do
-        task.wait(0.05)
-        if JJS.F.auto_dash_assist then
-            local enemy, d = nearest_enemy(JJS.CFG.m1_outer_range + 4, true)
-            if enemy and d and d > JJS.CFG.m1_inner_range then
-                JJS.key(JJS.CFG.dash_key, 0.05)
+        task.wait(0.3)
+        if F.auto_dash_assist and focused() then
+            local enemy, d = nearest(CFG.m1_outer + 4, true)
+            if enemy and d and d > CFG.m1_inner then
+                press_key(CFG.dash_key, 0.05)
                 task.wait(0.15)
-                JJS.mouse(1, 0.06)
-            end
-            task.wait(0.3)
-        end
-    end
-end)
-task.spawn(function()
-    while true do
-        task.wait(0.05)
-        if JJS.F.auto_perfect_clap then
-            -- perfect clap = M1 sau R (Switcher). simplified: pulse R then M1
-            JJS.key(Enum.KeyCode.R, 0.04)
-            task.wait(0.06)
-            JJS.mouse(1, 0.05)
-            task.wait(0.9)
-        end
-    end
-end)
-
---=============================================================
--- auto counter
---=============================================================
-task.spawn(function()
-    while true do
-        task.wait(0.1)
-        if JJS.F.auto_counter then
-            local enemy, d = nearest_enemy(JJS.CFG.m1_outer_range + 2, true)
-            if enemy and d and d <= JJS.CFG.m1_outer_range + 2 then
-                JJS.key(JJS.CFG.counter_key, 0.05)
-                task.wait(0.4)
+                press_m1(0.06)
             end
         end
     end
 end)
 
---=============================================================
--- auto block skills + nail block
---=============================================================
+-- counter
 task.spawn(function()
     while true do
         task.wait(0.1)
-        if JJS.F.auto_block_skills then
-            -- đã xử lý ở execute_parry khi skill anim phát. đây là dự phòng: nếu enemy gần
-            local _, d = nearest_enemy(20, true)
-            if d and d < 8 then
-                -- luôn giữ block pulse
-                JJS.mouse(2, 0.08)
+        if F.auto_counter and focused() then
+            local _, d = nearest(CFG.m1_outer + 2, true)
+            if d and d <= CFG.m1_outer + 2 then
+                press_key(CFG.counter_key, 0.05)
+                task.wait(0.5)
             end
+        end
+    end
+end)
+
+-- auto block + nail
+task.spawn(function()
+    while true do
+        task.wait(0.15)
+        if F.auto_block_skills and focused() then
+            local _, d = nearest(20, true)
+            if d and d < 8 then press_m2(0.08) end
         end
     end
 end)
 task.spawn(function()
     while true do
-        task.wait(0.05)
-        if JJS.F.nail_block then
+        task.wait(0.1)
+        if F.nail_block and focused() then
             local my = my_root()
             if my then
-                for _, obj in ipairs(workspace:GetDescendants()) do
-                    if obj:IsA("BasePart") and (obj.Name:lower():find("nail") or obj.Name:lower():find("projectile")) then
-                        if dist(my.Position, obj.Position) < 40 then
-                            JJS.mouse(2, 0.08)
-                            break
-                        end
+                for _, o in ipairs(workspace:GetDescendants()) do
+                    if o:IsA("BasePart") and (o.Name:lower():find("nail") or o.Name:lower():find("projectile")) then
+                        if dist(my.Position, o.Position) < 40 then press_m2(0.08); break end
                     end
                 end
             end
@@ -1247,89 +934,74 @@ task.spawn(function()
     end
 end)
 
---=============================================================
--- QTE / Final Judgement / Beam / Ratio
---=============================================================
+-- qte spam
 task.spawn(function()
+    local keys = {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.R, Enum.KeyCode.F, Enum.KeyCode.A, Enum.KeyCode.D}
     while true do
-        local wait_amt = 1 / JJS.CFG.qte_kps
+        local wait_amt = 1 / math.max(1, CFG.qte_kps)
         task.wait(wait_amt)
-        if JJS.F.auto_qte or JJS.F.auto_fj or JJS.F.auto_beam or JJS.F.auto_ratio then
-            local k = JJS.CFG.qte_keys[math.random(1, #JJS.CFG.qte_keys)]
-            JJS.key(k, 0.02)
+        if (F.auto_qte or F.auto_fj or F.auto_beam) and focused() then
+            press_key(keys[math.random(1, #keys)], 0.02)
         end
     end
 end)
 
---=============================================================
--- fullbright / fps boost / cull fx / allow states / rejoin
---=============================================================
-local _lighting_orig = nil
-local function apply_fullbright(on)
-    if on and not _lighting_orig then
-        _lighting_orig = {
+-- fullbright
+local fb_save = nil
+function apply_fullbright(on)
+    if on and not fb_save then
+        fb_save = {
             Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient,
             Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime,
-            FogEnd = Lighting.FogEnd, ExposureCompensation = Lighting.ExposureCompensation,
+            FogEnd = Lighting.FogEnd,
         }
-        Lighting.Ambient = Color3.fromRGB(200,200,200)
-        Lighting.OutdoorAmbient = Color3.fromRGB(200,200,200)
+        Lighting.Ambient = Color3.fromRGB(200, 200, 200)
+        Lighting.OutdoorAmbient = Color3.fromRGB(200, 200, 200)
         Lighting.Brightness = 2
         Lighting.ClockTime = 12
         Lighting.FogEnd = 100000
-        Lighting.ExposureCompensation = 0.3
-    elseif not on and _lighting_orig then
-        for k, v in pairs(_lighting_orig) do pcall(function() Lighting[k] = v end) end
-        _lighting_orig = nil
+    elseif not on and fb_save then
+        for k, v in pairs(fb_save) do pcall(function() Lighting[k] = v end) end
+        fb_save = nil
     end
 end
 
-local _fps_orig = nil
-local function apply_fps_boost(on)
-    if on and not _fps_orig then
-        _fps_orig = { GlobalShadows = Lighting.GlobalShadows, QualityLevel = Lighting.QualityLevel }
+local fps_save = nil
+function apply_fps_boost(on)
+    if on and not fps_save then
+        fps_save = {GlobalShadows = Lighting.GlobalShadows}
         Lighting.GlobalShadows = false
-        pcall(function() Lighting.QualityLevel = Enum.QualityLevel.Level01 end)
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if d:IsA("Decal") or d:IsA("Texture") then
-                pcall(function() d.Transparency = 1 end)
-            elseif d:IsA("BasePart") and d.Material ~= Enum.Material.SmoothPlastic then
-                pcall(function() d.Material = Enum.Material.SmoothPlastic end)
-            end
-        end
-    elseif not on and _fps_orig then
-        pcall(function() Lighting.GlobalShadows = _fps_orig.GlobalShadows end)
-        pcall(function() Lighting.QualityLevel = _fps_orig.QualityLevel end)
-        _fps_orig = nil
+    elseif not on and fps_save then
+        pcall(function() Lighting.GlobalShadows = fps_save.GlobalShadows end)
+        fps_save = nil
     end
 end
 
+-- cull
 task.spawn(function()
     while true do
         task.wait(2)
-        if JJS.F.cull_fx then
-            for _, child in ipairs(workspace:GetChildren()) do
-                if child.Name == "Effects" or child.Name == "Debris" or child.Name == "CombatEffects" then
-                    for _, d in ipairs(child:GetChildren()) do
-                        pcall(function() d:Destroy() end)
-                    end
+        if F.cull_fx then
+            for _, c in ipairs(workspace:GetChildren()) do
+                if c.Name == "Effects" or c.Name == "Debris" or c.Name == "CombatEffects" then
+                    for _, d in ipairs(c:GetChildren()) do pcall(function() d:Destroy() end) end
                 end
             end
         end
     end
 end)
 
-local function strip_no_state()
-    local char = lp.Character; if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local names = {"NoJump","NoDash","NoBlock","NoSprint","NoM1","NoAttack","Stunned","Ragdolled","Frozen","Stunned_","CannotMove"}
-    for _, tgt in ipairs({char, lp, hum}) do
-        if tgt then
-            for _, attr in ipairs(names) do pcall(function() tgt:SetAttribute(attr, nil) end) end
+-- strip states
+local function strip_states()
+    local ch = lp.Character; if not ch then return end
+    local names = {"NoJump", "NoDash", "NoBlock", "NoSprint", "NoM1", "NoAttack", "Stunned", "Ragdolled", "Frozen"}
+    for _, t in ipairs({ch, lp}) do
+        if t then
+            for _, a in ipairs(names) do pcall(function() t:SetAttribute(a, nil) end) end
         end
     end
-    for _, d in ipairs(char:GetDescendants()) do
-        if d:IsA("BoolValue") or d:IsA("NumberValue") or d:IsA("StringValue") or d:IsA("StringValue") then
+    for _, d in ipairs(ch:GetDescendants()) do
+        if d:IsA("BoolValue") or d:IsA("NumberValue") or d:IsA("StringValue") then
             if d.Name:find("No") or d.Name:find("Stun") or d.Name:find("Freeze") then
                 pcall(function() d:Destroy() end)
             end
@@ -1339,35 +1011,22 @@ end
 task.spawn(function()
     while true do
         task.wait(0.3)
-        if JJS.F.allow_jump or JJS.F.allow_dash or JJS.F.allow_block or JJS.F.allow_sprint or JJS.F.allow_attack or JJS.F.no_stun then
-            strip_no_state()
+        if F.allow_jump or F.allow_dash or F.allow_block or F.allow_sprint or F.allow_attack or F.no_stun then
+            strip_states()
         end
     end
 end)
 
-task.spawn(function()
-    while true do
-        task.wait(5)
-        if JJS.F.auto_rejoin then
-            if not lp.Parent or (lp.Character == nil and #Players:GetPlayers() <= 1) then
-                pcall(function() TeleportService:Teleport(game.PlaceId, lp) end)
-            end
-        end
-    end
-end)
-
---=============================================================
 -- unlock emotes
---=============================================================
 task.spawn(function()
     while true do
         task.wait(3)
-        if JJS.F.unlock_emotes then
+        if F.unlock_emotes then
             local pg = lp:FindFirstChild("PlayerGui")
             if pg then
                 for _, d in ipairs(pg:GetDescendants()) do
-                    if d:IsA("GuiObject") and (d.Name:lower():find("emote") or d.Name:lower():find("slot")) then
-                        if d:IsA("GuiButton") then d.Active = true end
+                    if d:IsA("GuiButton") and (d.Name:lower():find("emote") or d.Name:lower():find("slot")) then
+                        d.Active = true
                     end
                 end
             end
@@ -1375,524 +1034,161 @@ task.spawn(function()
     end
 end)
 
---=============================================================
 -- ESP
---=============================================================
-local esp_highlights = {}
-local function attach_esp(char, color)
-    if not char or esp_highlights[char] then return end
-    local hl = Instance.new("Highlight")
-    hl.Name = "jjs_esp"
-    hl.FillColor = color
-    hl.FillTransparency = 0.55
-    hl.OutlineColor = Color3.fromRGB(255,255,255)
-    hl.OutlineTransparency = 0.15
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = char
-    esp_highlights[char] = hl
+local esp_hl = {}
+local function attach_esp(obj, color)
+    if not obj or esp_hl[obj] then return end
+    local hl = mk("Highlight", {
+        Name = "jjs_esp", FillColor = color, FillTransparency = 0.55,
+        OutlineColor = Color3.new(1, 1, 1), OutlineTransparency = 0.15,
+        DepthMode = Enum.HighlightDepthMode.AlwaysOnTop, Parent = obj,
+    })
+    esp_hl[obj] = hl
 end
-local function clear_all_esp()
-    for c, hl in pairs(esp_highlights) do
-        pcall(function() if hl and hl.Parent then hl:Destroy() end end)
-    end
-    esp_highlights = {}
+local function clear_esp()
+    for c, hl in pairs(esp_hl) do pcall(function() if hl and hl.Parent then hl:Destroy() end end) end
+    esp_hl = {}
 end
 task.spawn(function()
     while true do
-        task.wait(0.3)
-        if JJS.F.esp then
+        task.wait(0.4)
+        if F.esp then
             local my = my_root()
-            if JJS.F.esp_players then
+            if F.esp_players then
                 for _, p in ipairs(Players:GetPlayers()) do
                     if p ~= lp and p.Character then
                         local h = p.Character:FindFirstChildOfClass("Humanoid")
                         local er = p.Character:FindFirstChild("HumanoidRootPart")
-                        if h and h.Health > 0 and my and er and dist(my.Position, er.Position) <= JJS.CFG.esp_max_dist then
-                            attach_esp(p.Character, JJS.CFG.esp_player_color)
+                        if h and h.Health > 0 and my and er and dist(my.Position, er.Position) <= CFG.esp_max then
+                            attach_esp(p.Character, CFG.esp_player_c)
                         end
                     end
                 end
             end
-            if JJS.F.esp_dummies then
+            if F.esp_dummies then
                 for _, m in ipairs(workspace:GetChildren()) do
-                    if (m:IsA("Model") or m:IsA("Folder")) and m:FindFirstChildOfClass and m:FindFirstChildOfClass(m, "Humanoid") then
-                        if not Players:GetPlayerFromCharacter(m) and m ~= lp.Character then
-                            attach_esp(m, JJS.CFG.esp_dummy_color)
-                        end
+                    if m:IsA("Model") and not Players:GetPlayerFromCharacter(m) and m:FindFirstChildOfClass("Humanoid") and m ~= lp.Character then
+                        attach_esp(m, CFG.esp_dummy_c)
                     end
                 end
             end
-            if JJS.F.esp_items then
-                for _, obj in ipairs(workspace:GetDescendants()) do
-                    if obj:IsA("BasePart") and (obj:FindFirstChild("ClickDetector") or obj:FindFirstChild("ProximityPrompt")) then
-                        attach_esp(obj, JJS.CFG.esp_item_color)
+            if F.esp_items then
+                for _, o in ipairs(workspace:GetDescendants()) do
+                    if o:IsA("BasePart") and (o:FindFirstChild("ClickDetector") or o:FindFirstChild("ProximityPrompt")) then
+                        attach_esp(o, CFG.esp_item_c)
                     end
                 end
             end
-        elseif next(esp_highlights) then
-            clear_all_esp()
+        elseif next(esp_hl) then
+            clear_esp()
         end
     end
 end)
 
---=============================================================
 -- anti-afk
---=============================================================
-_G.__jjs_afk_conn = nil
-local function set_anti_afk(on)
-    if on then
-        if not _G.__jjs_afk_conn then
-            _G.__jjs_afk_conn = lp.Idled:Connect(function()
-                if VIM then pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
-            end)
-        end
-    else
-        if _G.__jjs_afk_conn then _G.__jjs_afk_conn:Disconnect(); _G.__jjs_afk_conn = nil end
-    end
-end
-
---=============================================================
--- macro recorder
---=============================================================
-local MACRO = { recording = false, playing = false, events = {}, start_t = 0, name = "macro" }
-UserInputService.InputBegan:Connect(function(input, gp)
-    if not MACRO.recording or gp then return end
-    table.insert(MACRO.events, { t = tick(), type = "press", it = input.UserInputType, kc = input.KeyCode })
-end)
-UserInputService.InputEnded:Connect(function(input, gp)
-    if not MACRO.recording then return end
-    table.insert(MACRO.events, { t = tick(), type = "release", it = input.UserInputType, kc = input.KeyCode })
-end)
-local function play_macro()
-    if MACRO.playing or #MACRO.events == 0 then return end
-    MACRO.playing = true
-    task.spawn(function()
-        local base = MACRO.events[1].t
-        local t0 = tick()
-        for _, ev in ipairs(MACRO.events) do
-            if not MACRO.playing then break end
-            local target = ev.t - base
-            local elapsed = tick() - t0
-            if target > elapsed then task.wait(target - elapsed) end
-            if ev.type == "press" then
-                if ev.it == Enum.UserInputType.MouseButton1 then JJS.mouse(1, 0.001)
-                elseif ev.it == Enum.UserInputType.MouseButton2 then JJS.mouse(2, 0.001)
-                elseif ev.it == Enum.UserInputType.Keyboard then JJS.key(ev.kc, 0.001) end
-            end
-        end
-        MACRO.playing = false
-    end)
-end
-
---=============================================================
--- PAGES
---=============================================================
-
--- Combat > General
-local p_cg = new_page("combat_general")
-local s_ms = section(p_cg, "MAIN SETTINGS")
-check_row(s_ms, "Auto Parry", "Master toggle. Parries incoming attacks via animation trigger.", function(v) JJS.set("auto_parry", v) end)
-check_row(s_ms, "Auto Parry Notify", "Connect notification for parry events.", function(v) JJS.set("auto_parry_notify", v) end)
-check_row(s_ms, "Face Target", "Rotate character to face enemy on parry.", function(v) JJS.setcfg("face_target", v) end)
-check_row(s_ms, "Aim Check", "Only parries when attack is aimed at you.", function(v) JJS.set("aim_check", v) end)
-check_row(s_ms, "Validation Retry", "Retry on failed conditions.", function(v) JJS.set("validation_retry", v) end)
-check_row(s_ms, "Block M1 During Parry Delay", "Suppress M1 while parry is queued.", function(v) JJS.setcfg("block_m1_parry", v) end)
-check_row(s_ms, "Disable When Unfocused", "Pause automation while window not focused.", function(v) JJS.setcfg("disable_on_unfocus", v) end)
-check_row(s_ms, "Disable During Dashing", "Skip parry while dashing.", function(v) JJS.setcfg("disable_while_dash", v) end)
-check_row(s_ms, "Auto Parry Dash", "Auto block when enemy dashes in.", function(v) JJS.set("auto_parry_dash", v) end)
-check_row(s_ms, "Assist Position", "Micro-strafe to maintain range.", function(v) JJS.set("assist_pos", v) end)
-check_row(s_ms, "Animation Logger", "Print animation IDs to console (F9).", function(v) JJS.set("anim_logger", v) end)
-check_row(s_ms, "Unlock More Emotes Slot", "Force-enable emote UI buttons.", function(v) JJS.set("unlock_emotes", v) end)
-
-local s_pm = section(p_cg, "PARRY MECHANICS")
-make_slider(s_pm, "Response Delay (s)", "Latency added before parry.", 0, 1, 0.12, 0.01, function(v) JJS.setcfg("parry_delay", v) end)
-make_slider(s_pm, "Parry Duration (s)", "Hold block time.", 0, 2, 0.10, 0.01, function(v) JJS.setcfg("parry_hold", v) end)
-make_slider(s_pm, "Hold After Attack (s)", "Keep block after last parry.", 0, 2, 0, 0.01, function(v) JJS.setcfg("parry_hold_after", v) end)
-make_slider(s_pm, "Detection Range", "Max range for detection.", 1, 50, 18, 0.1, function(v) JJS.setcfg("parry_range_skill", v) end)
-make_slider(s_pm, "Auto Parry M1s Range", "M1-specific range.", 1, 50, 11, 0.1, function(v) JJS.setcfg("parry_range_m1", v) end)
-make_slider(s_pm, "Motion Prediction", "Compensate enemy velocity.", 0, 1, 0.14, 0.01, function(v) JJS.setcfg("parry_motion_pred", v) end)
-make_slider(s_pm, "Success Rate", "Probability of parry.", 0, 1, 1, 0.01, function(v) JJS.setcfg("parry_success", v) end)
-make_slider(s_pm, "Face Duration", "Face enemy duration.", 0, 2, 0.5, 0.01, function(v) JJS.setcfg("face_duration", v) end)
-make_slider(s_pm, "Pre-Face Delay", "Delay before facing.", 0, 1, 0.1, 0.01, function(v) JJS.setcfg("pre_face_delay", v) end)
-
--- Combat > Combat
-local p_cc = new_page("combat_combat")
-local s_off = section(p_cc, "OFFENSE")
-check_row(s_off, "Auto Punch", "Spam M1 at enemies in range.", function(v) JJS.set("auto_m1", v) end)
-check_row(s_off, "Auto Punch After Parry", "Punch instantly after parry.", function(v) JJS.setcfg("punch_after_parry", v) end)
-check_row(s_off, "Auto Dash Assist", "Dash+M1 toward target.", function(v) JJS.set("auto_dash_assist", v) end)
-check_row(s_off, "Auto Perfect Clap", "R then M1 combo pulse.", function(v) JJS.set("auto_perfect_clap", v) end)
-check_row(s_off, "Auto Black Flash", "M1 re-press in window.", function(v) JJS.set("auto_bf", v) end)
-check_row(s_off, "Auto Black Flash Chain", "Longer chain variant.", function(v) JJS.set("auto_bf_chain", v) end)
-check_row(s_off, "Auto Counter", "Auto press counter slot.", function(v) JJS.set("auto_counter", v) end)
-check_row(s_off, "Glide To Target", "MoveTo enemy when out of range.", function(v) JJS.setcfg("glide_target", v) end)
-check_row(s_off, "Human Combo", "Stop after 3 hits.", function(v) JJS.setcfg("human_combo", v) end)
-check_row(s_off, "Auto Harada Dodges", "M1+M2 on incoming.", function(v) JJS.set("auto_harada", v) end)
-local s_bf = section(p_cc, "BLACK FLASH")
-make_slider(s_bf, "BF Timing Shift (s)", "Fine-tune.", -0.5, 0.5, 0, 0.01, function(v) JJS.setcfg("bf_shift", v) end)
-make_segmented(s_bf, {"Legit","Blatant"}, 1, function(i, name) JJS.set("blatant_mode", name == "Blatant") end)
-make_slider(s_bf, "BF Chain Range (studs)", "Range for chain.", 0, 25, 11.7, 0.1, function(v) JJS.setcfg("bf_chain_range", v) end)
-local s_hd = section(p_cc, "HARUTA DODGE")
-make_slider(s_hd, "Dodge Delay (s)", "Trigger timing (rec -0.009).", -0.5, 0.5, -0.009, 0.001, function(v) JJS.setcfg("dodge_delay", v) end)
-local s_par = section(p_cc, "PARAMETERS")
-make_slider(s_par, "Attack Delay", "Interval between punches.", 0, 1, 0.08, 0.01, function(v) JJS.setcfg("m1_interval", v) end)
-make_slider(s_par, "Hold M1 Time", "Mouse hold duration.", 0, 1, 0.06, 0.01, function(v) JJS.setcfg("m1_hold", v) end)
-make_slider(s_par, "Attack Distance", "Range to start attacking.", 1, 25, 11.5, 0.5, function(v) JJS.setcfg("m1_outer_range", v) end)
-make_slider(s_par, "Detection Dist", "Range for look-at.", 1, 50, 15, 0.5, function(v) JJS.setcfg("look_detect_dist", v) end)
-make_slider(s_par, "Attack Chance", "Probability per cycle.", 0, 1, 1, 0.01, function(v) JJS.setcfg("m1_chance", v) end)
-check_row(s_par, "Look At Target", "Face target automatically.", function(v) JJS.setcfg("look_at_target", v) end)
-make_slider(s_par, "Look Duration", "Duration to hold look.", 0, 2, 0.35, 0.01, function(v) JJS.setcfg("look_duration", v) end)
-local s_def = section(p_cc, "DEFENSE")
-check_row(s_def, "Auto Block Skills", "Auto block when enemy nearby.", function(v) JJS.set("auto_block_skills", v) end)
-check_row(s_def, "Nail Projectile Block", "Block nail/projectile parts.", function(v) JJS.set("nail_block", v) end)
-local s_thr = section(p_cc, "THRESHOLDS")
-make_slider(s_thr, "Auto Parry Skills Range", "Skill parry range.", 1, 50, 18, 0.5, function(v) JJS.setcfg("parry_range_skill", v) end)
-make_slider(s_thr, "Extra Delay", "Added parry delay.", 0, 1, 0, 0.01, function(v) JJS.setcfg("parry_extra_delay", v) end)
-make_slider(s_thr, "Extra Hold", "Added parry hold.", 0, 2, 0, 0.01, function(v) JJS.setcfg("parry_extra_hold", v) end)
-make_slider(s_thr, "Nail Distance", "Detect nail range.", 1, 100, 40, 1, function(v) end)
-
--- Misc > Misc
-local p_mi = new_page("misc_misc")
-local s_mi = section(p_mi, "MISC")
-check_row(s_mi, "Side Dash (Dodge)", "Strafe on incoming.", function(v) JJS.set("side_dash", v) end)
-check_row(s_mi, "Camera Lock", "Lock cam onto target.", function(v) JJS.set("camera_lock", v) end)
-check_row(s_mi, "Blatant Mode", "Remove smoothing.", function(v) JJS.set("blatant_mode", v) end)
-check_row(s_mi, "No Dash Cooldown", "Faster dash key pulse.", function(v) JJS.set("no_dash_cd", v) end)
-check_row(s_mi, "No Stun", "Strip stun attributes.", function(v) JJS.set("no_stun", v) end)
-local s_tw = section(p_mi, "TARGET WHITELIST")
-local wl = {}
-local ps_row = create("Frame", { Size = UDim2.new(1,0,0,30), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_tw })
-create("TextLabel", {
-    Size = UDim2.new(0,90,1,0), BackgroundTransparency = 1, Text = "Player Select",
-    Font = font_med, TextSize = 11, TextColor3 = theme.text,
-    TextXAlignment = Enum.TextXAlignment.Left, Parent = ps_row,
-})
-local ps_btn = make_button(ps_row, "Cycle", 140, 24, function()
-    local list = {}
-    for _, p in ipairs(Players:GetPlayers()) do if p ~= lp then table.insert(list, p) end end
-    if #list == 0 then return end
-    wl.current_idx = ((wl.current_idx or 0) % #list) + 1
-    wl.current = list[wl.current_idx]
-    ps_btn.Text = wl.current.Name
-end, { textsize = 10 })
-ps_btn.Position = UDim2.new(0,96,0,3)
-local ps_add = make_button(ps_row, "Whitelist", 110, 24, function()
-    if wl.current then wl[wl.current.Name] = true end
-end, { textsize = 10 })
-ps_add.AnchorPoint = Vector2.new(1,0); ps_add.Position = UDim2.new(1,0,0,3)
-make_red_button(s_tw, "Whitelist All", function()
-    for _, p in ipairs(Players:GetPlayers()) do if p ~= lp then wl[p.Name] = true end end
-end, { height = 30 })
-make_red_button(s_tw, "Clear Whitelist", function() wl = {} end, { height = 30, dim = true })
-
--- Misc > Auto Moves
-local p_am = new_page("misc_automoves")
-local s_am = section(p_am, "AUTO MOVES")
-check_row(s_am, "Auto Dash", "Dash whenever possible.", function(v) JJS.set("auto_dash", v) end)
-check_row(s_am, "Auto Jump", "Jump on interval.", function(v) JJS.set("auto_jump", v) end)
-check_row(s_am, "Bunny Hop", "Jump while moving.", function(v) JJS.set("bunny_hop", v) end)
-make_slider(s_am, "Jump Interval", "Interval between jumps.", 0.1, 2, 0.4, 0.05, function(v) JJS.setcfg("auto_jump_interval", v) end)
-make_slider(s_am, "Bhop Interval", "Bhop timing.", 0.05, 1, 0.15, 0.01, function(v) JJS.setcfg("bhop_interval", v) end)
-
--- Misc > QTE
-local p_q = new_page("misc_qte")
-local s_q = section(p_q, "QTE")
-check_row(s_q, "Auto QTE (Clash)", "Spam keys to win clashes.", function(v) JJS.set("auto_qte", v) end)
-check_row(s_q, "Auto Final Judgement", "Key spam variant.", function(v) JJS.set("auto_fj", v) end)
-check_row(s_q, "Auto Beam Minigame", "Key spam variant.", function(v) JJS.set("auto_beam", v) end)
-check_row(s_q, "Auto Ratio Nanami", "Auto ratio timing.", function(v) JJS.set("auto_ratio", v) end)
-local s_qt = section(p_q, "TIMING")
-make_slider(s_qt, "Ratio Offset (s)", "Ratio timing offset.", -0.5, 0.5, 0.1, 0.01, function(v) JJS.setcfg("ratio_offset", v) end)
-make_slider(s_qt, "Final Judgement KPS", "Keys per second.", 1, 30, 10, 1, function(v) JJS.setcfg("qte_kps", v) end)
-
--- Utility > Macros
-local p_um = new_page("util_macros")
-local s_rec = section(p_um, "RECORDER")
-local rec_status = create("TextLabel", {
-    Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1, Text = "Idle. Nothing recorded yet.",
-    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-    TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
-    LayoutOrder = next_order(), Parent = s_rec,
-})
-create("TextLabel", {
-    Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
-    TextWrapped = true, Text = "Captures keys and mouse clicks with exact timing.",
-    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-    TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = next_order(), Parent = s_rec,
-})
-local rec_btn = make_red_button(s_rec, "Start Recording", function()
-    MACRO.recording = not MACRO.recording
-    if MACRO.recording then
-        MACRO.events = {}
-        rec_btn.Text = "Stop Recording (" .. tostring(#MACRO.events) .. ")"
-        rec_status.Text = "Recording..."
-    else
-        rec_btn.Text = "Start Recording"
-        rec_status.Text = "Recorded " .. tostring(#MACRO.events) .. " events."
-    end
-end, { height = 30 })
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if MACRO.recording then
-            rec_btn.Text = "Stop Recording (" .. tostring(#MACRO.events) .. ")"
-        end
-    end
-end)
-local save_row = create("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1, LayoutOrder = next_order(), Parent = s_rec })
-local name_box = create("TextBox", {
-    Size = UDim2.new(1,-90,1,0), BackgroundColor3 = theme.input,
-    PlaceholderText = "Macro name...", PlaceholderColor3 = theme.text_faint,
-    Text = "", Font = font_ui, TextSize = 11, TextColor3 = theme.text,
-    TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, Parent = save_row,
-})
-corner(name_box, 4); add_stroke(name_box, theme.stroke); pad(name_box, 0,8,0,8)
-make_button(save_row, "Save", 80, 26, function()
-    MACRO.name = name_box.Text ~= "" and name_box.Text or "macro"
-    if type(writefile) == "function" then
-        pcall(function() writefile("jjs_" .. MACRO.name .. ".json", HttpService:JSONEncode(MACRO.events)) end)
-    end
-end, { textsize = 10 }).AnchorPoint = Vector2.new(1,0)
-for _, child in ipairs(save_row:GetChildren()) do
-    if child:IsA("TextButton") then child.AnchorPoint = Vector2.new(1,0); child.Position = UDim2.new(1,0,0,0) end
-end
-make_red_button(s_rec, "Play Macros", function() play_macro() end, { height = 30 })
-make_red_button(s_rec, "Stop Playback", function() MACRO.playing = false end, { height = 30, dim = true })
-
--- Utility > Player & QoL
-local p_uo = new_page("util_player")
-local s_uo_g = section(p_uo, "GENERAL")
-check_row(s_uo_g, "Fullbright", "Flatten lighting.", function(v) JJS.set("fullbright", v); apply_fullbright(v) end)
-check_row(s_uo_g, "FPS Boost", "Drop render costs.", function(v) JJS.set("fps_boost", v); apply_fps_boost(v) end)
-check_row(s_uo_g, "No Screen Shake", "Suppress camera shake.", function(v) JJS.set("no_shake", v) end)
-check_row(s_uo_g, "Cull Combat Effects", "Destroy effects folders periodically.", function(v) JJS.set("cull_fx", v) end)
-check_row(s_uo_g, "Auto Rejoin", "Teleport back on disconnect.", function(v) JJS.set("auto_rejoin", v) end)
-local s_uo_sc = section(p_uo, "STATE CLEANUP")
-check_row(s_uo_sc, "Allow Jump", "Strip NoJump.", function(v) JJS.set("allow_jump", v) end)
-check_row(s_uo_sc, "Allow Dash", "Strip NoDash.", function(v) JJS.set("allow_dash", v) end)
-check_row(s_uo_sc, "Allow Block", "Strip NoBlock.", function(v) JJS.set("allow_block", v) end)
-check_row(s_uo_sc, "Allow Sprint", "Strip NoSprint.", function(v) JJS.set("allow_sprint", v) end)
-check_row(s_uo_sc, "Allow Attack", "Strip NoM1.", function(v) JJS.set("allow_attack", v) end)
-
--- Visuals > ESP
-local p_ve = new_page("vis_esp")
-local s_ve_w = section(p_ve, "WALLHACK SETTINGS")
-check_row(s_ve_w, "Enable ESP", "Master switch.", function(v) JJS.set("esp", v) end)
-check_row(s_ve_w, "Players ESP", "Highlight players.", function(v) JJS.set("esp_players", v) end)
-check_row(s_ve_w, "Dummies / NPC ESP", "Highlight NPCs.", function(v) JJS.set("esp_dummies", v) end)
-check_row(s_ve_w, "Item ESP", "Highlight items.", function(v) JJS.set("esp_items", v) end)
-local s_ve_c = section(p_ve, "ESP COLOR")
-make_color_row(s_ve_c, "Player", JJS.CFG.esp_player_color, function(c) JJS.CFG.esp_player_color = c end)
-make_color_row(s_ve_c, "Dummy", JJS.CFG.esp_dummy_color, function(c) JJS.CFG.esp_dummy_color = c end)
-make_color_row(s_ve_c, "Item", JJS.CFG.esp_item_color, function(c) JJS.CFG.esp_item_color = c end)
-local s_ve_d = section(p_ve, "DETECTION")
-make_slider(s_ve_d, "Max Distance", "ESP draw distance.", 0, 2000, 500, 50, function(v) JJS.setcfg("esp_max_dist", v) end)
-
--- Settings > Interface
-local p_si = new_page("set_interface")
-local s_si = section(p_si, "INTERFACE SETTINGS")
-check_row(s_si, "Visible", "Toggle UI.", function(v)
-    if not v then win.Visible = false; update_floating_state(false) end
-end)
-check_row(s_si, "Silent Mode", "Suppress notifications.", function(v) JJS.set("silent_mode", v) end)
-make_setting_button_row(s_si, "Menu Toggle Bind", menu_keybind.Name, function() listening_for_key = true end)
-local s_shield = section(p_si, "SHIELD / LEGIT")
-check_row(s_shield, "Input Jitter", "Randomize each input 18-55ms.", function(v) JJS.set("input_jitter", v) end)
-check_row(s_shield, "Rate Limit Inputs", "Cap automated inputs/s.", function(v)
-    JJS.set("rate_limit", v)
-    JJS.CFG.max_inputs_sec = v and 7 or 999
-end)
-check_row(s_shield, "Random Skip", "3% chance of skip per input.", function(v)
-    JJS.set("random_skip", v)
-    JJS.CFG.skip_chance = v and 0.03 or 0
-end)
-check_row(s_shield, "Anti-AFK", "Keep-alive on idle.", function(v) JJS.set("anti_afk", v); set_anti_afk(v) end)
-
--- Settings > Info
-local p_inf = new_page("set_info")
-local s_info = section(p_inf, "BUILD")
-make_status_row(s_info, "Build", "v0.7 full", theme.accent)
-make_status_row(s_info, "Author", "Lee / Nyx", theme.accent)
-make_status_row(s_info, "Game", "Jujutsu Shenanigans", theme.accent)
-make_status_row(s_info, "VIM", VIM and "Available" or "Missing", VIM and theme.green or theme.accent)
-make_status_row(s_info, "Detection", "No Known", theme.green)
-make_status_row(s_info, "Discord", "jvHDKVKAnC", theme.accent)
-local s_reg = section(p_inf, "REGISTRY")
-make_red_button(s_reg, "Dump Registry (console)", function() JJS.dump_registry() end, { height = 28 })
-make_status_row(s_reg, "Tracked Anims", "0", theme.text_dim)
-
---=============================================================
--- nav tree
---=============================================================
-add_collapsible_group("COMBAT", { {"General","combat_general"}, {"Combat","combat_combat"} })
-nav_spacer(4)
-add_collapsible_group("MISCELLANEOUS", { {"Misc","misc_misc"}, {"Auto Moves","misc_automoves"}, {"QTE","misc_qte"} })
-nav_spacer(4)
-add_collapsible_group("UTILITY", { {"Macros","util_macros"}, {"Player & QoL","util_player"} })
-nav_spacer(4)
-add_collapsible_group("VISUALS", { {"ESP","vis_esp"} })
-nav_spacer(4)
-add_collapsible_group("SETTINGS", { {"Interface","set_interface"}, {"Info","set_info"} })
-
---=============================================================
--- welcome + discord + thanks
---=============================================================
-local function make_card(name, title, w, h)
-    local f = create("Frame", {
-        Name = name, Size = UDim2.fromOffset(w,h),
-        Position = UDim2.new(0.5,-w/2,0.5,-h/2),
-        BackgroundColor3 = theme.bg, ClipsDescendants = true, ZIndex = 60, Parent = gui,
-    })
-    corner(f, 8); add_stroke(f, theme.stroke)
-    local head = create("Frame", { Size = UDim2.new(1,0,0,32), BackgroundColor3 = theme.panel, Parent = f })
-    create("Frame", { Size = UDim2.new(1,0,0,1), Position = UDim2.new(0,0,1,-1), BackgroundColor3 = theme.stroke_soft, Parent = head })
-    create("TextLabel", {
-        Position = UDim2.fromOffset(14,0), Size = UDim2.new(1,-40,1,0), BackgroundTransparency = 1,
-        Text = title, Font = font_med, TextSize = 12, TextColor3 = theme.text,
-        TextXAlignment = Enum.TextXAlignment.Left, Parent = head,
-    })
-    local xb = create("TextButton", {
-        Size = UDim2.fromOffset(32,32), Position = UDim2.new(1,-32,0,0), BackgroundTransparency = 1,
-        Text = "x", Font = font_ui, TextSize = 12, TextColor3 = theme.text_dim, AutoButtonColor = false, Parent = head,
-    })
-    xb.MouseEnter:Connect(function() xb.TextColor3 = theme.accent end)
-    xb.MouseLeave:Connect(function() xb.TextColor3 = theme.text_dim end)
-    xb.MouseButton1Click:Connect(function() f.Visible = false end)
-    make_draggable(f, head)
-    return f
-end
-
-local welcome = make_card("welcome_card", "JJS KILLER  -  v0.7 loaded", 380, 260)
-create("TextLabel", {
-    Position = UDim2.fromOffset(0,54), Size = UDim2.new(1,0,0,28), BackgroundTransparency = 1,
-    Text = "TY for using script :D", Font = font_bold, TextSize = 18,
-    TextColor3 = theme.accent, TextXAlignment = Enum.TextXAlignment.Center, Parent = welcome,
-})
-create("TextLabel", {
-    Position = UDim2.fromOffset(0,86), Size = UDim2.new(1,0,0,16), BackgroundTransparency = 1,
-    Text = "jujutsu shenanigans  -  full build", Font = font_mono, TextSize = 11,
-    TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Center, Parent = welcome,
-})
-create("TextLabel", {
-    Position = UDim2.fromOffset(22,116), Size = UDim2.new(1,-44,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    Text = "All toggles start OFF. RightShift opens menu. VIM " .. (VIM and "available ✓" or "missing ✗"),
-    Font = font_ui, TextSize = 11, TextColor3 = theme.text_dim,
-    TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Center, Parent = welcome,
-})
-local join_btn = create("TextButton", {
-    Size = UDim2.fromOffset(140,26), Position = UDim2.new(0.5,-145,1,-40),
-    BackgroundColor3 = theme.accent, Text = "Join Discord", Font = font_bold, TextSize = 11,
-    TextColor3 = Color3.fromRGB(255,255,255), AutoButtonColor = false, Parent = welcome,
-})
-corner(join_btn, 5)
-local cont_btn = create("TextButton", {
-    Size = UDim2.fromOffset(140,26), Position = UDim2.new(0.5,5,1,-40),
-    BackgroundColor3 = theme.panel_alt, Text = "Continue", Font = font_med, TextSize = 11,
-    TextColor3 = theme.text_dim, AutoButtonColor = false, Parent = welcome,
-})
-corner(cont_btn, 5); add_stroke(cont_btn, theme.stroke)
-local function open_discord()
-    if _G.__jjs_discord and _G.__jjs_discord.Parent then _G.__jjs_discord.Visible = true return end
-    local dw = make_card("discord_card", "Discord", 400, 210)
-    dw.Position = UDim2.new(0.5,-200,0.5,-60)
-    _G.__jjs_discord = dw
-    create("TextLabel", {
-        Position = UDim2.fromOffset(20,52), Size = UDim2.new(1,-40,0,18), BackgroundTransparency = 1,
-        Text = "Join the community server:", Font = font_ui, TextSize = 11,
-        TextColor3 = theme.text_dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = dw,
-    })
-    create("TextBox", {
-        Position = UDim2.fromOffset(20,78), Size = UDim2.new(1,-40,0,32),
-        BackgroundColor3 = theme.input, Text = DISCORD_LINK, Font = font_mono, TextSize = 12,
-        TextColor3 = theme.accent, TextXAlignment = Enum.TextXAlignment.Center,
-        ClearTextOnFocus = false, Parent = dw,
-    })
-    local copy = create("TextButton", {
-        Position = UDim2.new(0.5,-145,1,-46), Size = UDim2.fromOffset(140,26),
-        BackgroundColor3 = theme.accent, Text = "copy link", Font = font_bold, TextSize = 11,
-        TextColor3 = Color3.fromRGB(255,255,255), AutoButtonColor = false, Parent = dw,
-    })
-    corner(copy, 5)
-    local closeb = create("TextButton", {
-        Position = UDim2.new(0.5,5,1,-46), Size = UDim2.fromOffset(140,26),
-        BackgroundColor3 = theme.panel_alt, Text = "close", Font = font_med, TextSize = 11,
-        TextColor3 = theme.text_dim, AutoButtonColor = false, Parent = dw,
-    })
-    corner(closeb, 5); add_stroke(closeb, theme.stroke)
-    copy.MouseButton1Click:Connect(function()
-        local ok = pcall(function()
-            if type(setclipboard) == "function" then setclipboard(DISCORD_LINK)
-            elseif type(toclipboard) == "function" then toclipboard(DISCORD_LINK) end
-        end)
-        copy.Text = ok and "copied" or "fail"
-        task.delay(1.2, function() copy.Text = "copy link" end)
-    end)
-    closeb.MouseButton1Click:Connect(function() dw.Visible = false end)
-end
-join_btn.MouseButton1Click:Connect(function() welcome.Visible = false; open_discord() end)
-cont_btn.MouseButton1Click:Connect(function() welcome.Visible = false end)
-
--- thanks badge
-local thanks = create("Frame", {
-    Name = "thanks_badge", AnchorPoint = Vector2.new(1,1),
-    Position = UDim2.new(1,-14,1,-14), Size = UDim2.fromOffset(190,26),
-    BackgroundColor3 = theme.panel, BackgroundTransparency = 1, ZIndex = 40, Parent = gui,
-})
-corner(thanks, 13)
-local thanks_stroke = add_stroke(thanks, theme.accent, 1, 1)
-local thanks_label = create("TextLabel", {
-    Size = UDim2.fromScale(1,1), BackgroundTransparency = 1,
-    Text = "TY for using script :D", Font = font_bold, TextSize = 11,
-    TextColor3 = theme.accent, TextTransparency = 1, Parent = thanks,
-})
-TweenService:Create(thanks, TweenInfo.new(0.5), { BackgroundTransparency = 0.15 }):Play()
-TweenService:Create(thanks_stroke, TweenInfo.new(0.5), { Transparency = 0.4 }):Play()
-task.delay(0.15, function() TweenService:Create(thanks_label, TweenInfo.new(0.5), { TextTransparency = 0 }):Play() end)
-
---=============================================================
--- toggle + boot
---=============================================================
-local function toggle_menu()
-    local show = not win.Visible
-    win.Visible = show
-    update_floating_state(show)
-end
-close.MouseButton1Click:Connect(toggle_menu)
-minimize.MouseButton1Click:Connect(toggle_menu)
-floating.MouseButton1Click:Connect(function() if fb_drag.moved then return end toggle_menu() end)
-UserInputService.InputBegan:Connect(function(input, processed)
-    if listening_for_key then
-        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Escape then
-            menu_keybind = input.KeyCode
-        end
-        listening_for_key = false
-        return
-    end
-    if processed then return end
-    if input.KeyCode == menu_keybind then toggle_menu() end
-end)
-
-set_page("combat_general")
-win.Visible = true
-update_floating_state(true)
-task.defer(function() task.wait(0.5); welcome.Visible = true; task.wait(0.2); open_discord() end)
-
+local afk_conn
 task.spawn(function()
     while true do
         task.wait(1)
-        local count = 0
-        for _ in pairs(REGISTRY) do count = count + 1 end
-        -- cập nhật label nếu tìm được
-        for _, s in ipairs(p_inf:GetDescendants()) do
-            if s:IsA("TextLabel") and s.Text == "Tracked Anims" then
-                local row = s.Parent
-                local val = row and row:FindFirstChild("TextLabel")
-                -- skip, easier:
-            end
+        local want = F.anti_afk
+        if want and not afk_conn then
+            afk_conn = lp.Idled:Connect(function()
+                if type(keypress) == "function" then
+                    pcall(function() keypress(Enum.KeyCode.Space); task.wait(0.05); keyrelease(Enum.KeyCode.Space) end)
+                else
+                    vim_key(Enum.KeyCode.Space, 0.05)
+                end
+            end)
+        elseif not want and afk_conn then
+            afk_conn:Disconnect(); afk_conn = nil
         end
     end
 end)
 
-print(string.format("[jjs] v0.7 loaded — VIM=%s — all features OFF", tostring(VIM ~= nil)))
+-- ========== WELCOME CARD ==========
+local welcome = mk("Frame", {
+    Name = "welcome", Size = UDim2.fromOffset(380, 250),
+    Position = UDim2.new(0.5, -190, 0.5, -125), BackgroundColor3 = T.bg,
+    ZIndex = 60, Parent = gui,
+})
+rnd(welcome, 8); str(welcome, T.stroke)
+local wh = mk("Frame", {Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = T.panel, Parent = welcome})
+mk("TextLabel", {Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -40, 1, 0), BackgroundTransparency = 1, Text = "JJS KILLER v0.8", Font = FMED, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = wh})
+local wx = mk("TextButton", {Size = UDim2.fromOffset(32, 32), Position = UDim2.new(1, -32, 0, 0), BackgroundTransparency = 1, Text = "x", Font = FUI, TextSize = 12, TextColor3 = T.dim, AutoButtonColor = false, Parent = wh})
+wx.MouseButton1Click:Connect(function() welcome.Visible = false end)
+make_drag(welcome, wh)
+mk("TextLabel", {Position = UDim2.fromOffset(0, 54), Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Text = "TY for using script :D", Font = FBOLD, TextSize = 18, TextColor3 = T.accent, TextXAlignment = Enum.TextXAlignment.Center, Parent = welcome})
+mk("TextLabel", {Position = UDim2.fromOffset(0, 88), Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, Text = "jujutsu shenanigans - all toggles OFF", Font = FMONO, TextSize = 11, TextColor3 = T.dim, TextXAlignment = Enum.TextXAlignment.Center, Parent = welcome})
+mk("TextLabel", {Position = UDim2.fromOffset(20, 116), Size = UDim2.new(1, -40, 0, 40), BackgroundTransparency = 1, TextWrapped = true, Text = "RightShift opens menu. Animation Logger before Auto Parry to tune.", Font = FUI, TextSize = 11, TextColor3 = T.dim, TextXAlignment = Enum.TextXAlignment.Center, Parent = welcome})
+local joinb = mk("TextButton", {Size = UDim2.fromOffset(140, 26), Position = UDim2.new(0.5, -145, 1, -40), BackgroundColor3 = T.accent, Text = "Discord", Font = FBOLD, TextSize = 11, TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = false, Parent = welcome})
+rnd(joinb, 5)
+local contb = mk("TextButton", {Size = UDim2.fromOffset(140, 26), Position = UDim2.new(0.5, 5, 1, -40), BackgroundColor3 = T.panel2, Text = "Continue", Font = FMED, TextSize = 11, TextColor3 = T.dim, AutoButtonColor = false, Parent = welcome})
+rnd(contb, 5); str(contb, T.stroke)
+contb.MouseButton1Click:Connect(function() welcome.Visible = false end)
+joinb.MouseButton1Click:Connect(function()
+    welcome.Visible = false
+    if _G.__jjs_dw and _G.__jjs_dw.Parent then _G.__jjs_dw.Visible = true return end
+    local dw = mk("Frame", {Name = "discord", Size = UDim2.fromOffset(400, 210), Position = UDim2.new(0.5, -200, 0.5, -60), BackgroundColor3 = T.bg, ZIndex = 60, Parent = gui})
+    rnd(dw, 8); str(dw, T.stroke)
+    _G.__jjs_dw = dw
+    local dh = mk("Frame", {Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = T.panel, Parent = dw})
+    mk("TextLabel", {Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -40, 1, 0), BackgroundTransparency = 1, Text = "Discord", Font = FMED, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Parent = dh})
+    local dx = mk("TextButton", {Size = UDim2.fromOffset(32, 32), Position = UDim2.new(1, -32, 0, 0), BackgroundTransparency = 1, Text = "x", Font = FUI, TextSize = 12, TextColor3 = T.dim, AutoButtonColor = false, Parent = dh})
+    dx.MouseButton1Click:Connect(function() dw.Visible = false end)
+    make_drag(dw, dh)
+    mk("TextLabel", {Position = UDim2.fromOffset(20, 52), Size = UDim2.new(1, -40, 0, 18), BackgroundTransparency = 1, Text = "Join the community server:", Font = FUI, TextSize = 11, TextColor3 = T.dim, TextXAlignment = Enum.TextXAlignment.Left, Parent = dw})
+    mk("TextBox", {Position = UDim2.fromOffset(20, 78), Size = UDim2.new(1, -40, 0, 32), BackgroundColor3 = T.input, Text = DISCORD, Font = FMONO, TextSize = 12, TextColor3 = T.accent, TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = dw})
+    local cb = mk("TextButton", {Position = UDim2.new(0.5, -145, 1, -46), Size = UDim2.fromOffset(140, 26), BackgroundColor3 = T.accent, Text = "copy link", Font = FBOLD, TextSize = 11, TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = false, Parent = dw})
+    rnd(cb, 5)
+    cb.MouseButton1Click:Connect(function()
+        local ok = pcall(function()
+            if type(setclipboard) == "function" then setclipboard(DISCORD)
+            elseif type(toclipboard) == "function" then toclipboard(DISCORD) end
+        end)
+        cb.Text = ok and "copied" or "fail"
+        task.delay(1.2, function() cb.Text = "copy link" end)
+    end)
+    local cl = mk("TextButton", {Position = UDim2.new(0.5, 5, 1, -46), Size = UDim2.fromOffset(140, 26), BackgroundColor3 = T.panel2, Text = "close", Font = FMED, TextSize = 11, TextColor3 = T.dim, AutoButtonColor = false, Parent = dw})
+    rnd(cl, 5); str(cl, T.stroke)
+    cl.MouseButton1Click:Connect(function() dw.Visible = false end)
+end)
+
+-- thanks badge
+local thanks = mk("Frame", {
+    Name = "thanks", AnchorPoint = Vector2.new(1, 1),
+    Position = UDim2.new(1, -14, 1, -14), Size = UDim2.fromOffset(190, 26),
+    BackgroundColor3 = T.panel, BackgroundTransparency = 0.15,
+    ZIndex = 40, Parent = gui,
+})
+rnd(thanks, 13); str(thanks, T.accent, 1, 0.4)
+mk("TextLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "TY for using script :D", Font = FBOLD, TextSize = 11, TextColor3 = T.accent, Parent = thanks})
+
+-- ========== TOGGLE + BOOT ==========
+local function toggle()
+    local s = not win.Visible
+    win.Visible = s
+    set_fb(s)
+end
+close.MouseButton1Click:Connect(toggle)
+floating.MouseButton1Click:Connect(function()
+    if fbdrag.moved then return end
+    toggle()
+end)
+UIS.InputBegan:Connect(function(i, gp)
+    if gp then return end
+    if i.KeyCode == MENU_KEY then toggle() end
+end)
+
+set_page("cg")
+win.Visible = true
+set_fb(true)
+
+print("[jjs] v0.8 loaded - all features OFF")
+
+end, function(e)
+    return tostring(e) .. "\n" .. debug.traceback()
+end)
+
+if not ok_load then
+    warn("[jjs] LOAD ERROR: " .. tostring(err_load))
+end
